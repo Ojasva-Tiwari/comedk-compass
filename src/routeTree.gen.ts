@@ -11,9 +11,11 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CollegesRouteImport } from './routes/colleges'
+import { Route as CutoffsRouteImport } from './routes/cutoffs'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as PredictorRouteImport } from './routes/predictor'
 import { Route as CollegesIndexRouteImport } from './routes/colleges.index'
+import { Route as CollegesSlugRouteImport } from './routes/colleges.$slug'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -23,6 +25,11 @@ const IndexRoute = IndexRouteImport.update({
 const CollegesRoute = CollegesRouteImport.update({
   id: '/colleges',
   path: '/colleges',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CutoffsRoute = CutoffsRouteImport.update({
+  id: '/cutoffs',
+  path: '/cutoffs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardRoute = DashboardRouteImport.update({
@@ -40,40 +47,72 @@ const CollegesIndexRoute = CollegesIndexRouteImport.update({
   path: '/',
   getParentRoute: () => CollegesRoute,
 } as any)
+const CollegesSlugRoute = CollegesSlugRouteImport.update({
+  id: '/$slug',
+  path: '/$slug',
+  getParentRoute: () => CollegesRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/colleges': typeof CollegesRouteWithChildren
+  '/cutoffs': typeof CutoffsRoute
   '/dashboard': typeof DashboardRoute
   '/predictor': typeof PredictorRoute
+  '/colleges/$slug': typeof CollegesSlugRoute
   '/colleges/': typeof CollegesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/cutoffs': typeof CutoffsRoute
   '/dashboard': typeof DashboardRoute
   '/predictor': typeof PredictorRoute
+  '/colleges/$slug': typeof CollegesSlugRoute
   '/colleges': typeof CollegesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/colleges': typeof CollegesRouteWithChildren
+  '/cutoffs': typeof CutoffsRoute
   '/dashboard': typeof DashboardRoute
   '/predictor': typeof PredictorRoute
+  '/colleges/$slug': typeof CollegesSlugRoute
   '/colleges/': typeof CollegesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/colleges' | '/dashboard' | '/predictor' | '/colleges/'
+  fullPaths:
+    | '/'
+    | '/colleges'
+    | '/cutoffs'
+    | '/dashboard'
+    | '/predictor'
+    | '/colleges/$slug'
+    | '/colleges/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dashboard' | '/predictor' | '/colleges'
+  to:
+    | '/'
+    | '/cutoffs'
+    | '/dashboard'
+    | '/predictor'
+    | '/colleges/$slug'
+    | '/colleges'
   id:
-    '__root__' | '/' | '/colleges' | '/dashboard' | '/predictor' | '/colleges/'
+    | '__root__'
+    | '/'
+    | '/colleges'
+    | '/cutoffs'
+    | '/dashboard'
+    | '/predictor'
+    | '/colleges/$slug'
+    | '/colleges/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CollegesRoute: typeof CollegesRouteWithChildren
+  CutoffsRoute: typeof CutoffsRoute
   DashboardRoute: typeof DashboardRoute
   PredictorRoute: typeof PredictorRoute
 }
@@ -92,6 +131,13 @@ declare module '@tanstack/react-router' {
       path: '/colleges'
       fullPath: '/colleges'
       preLoaderRoute: typeof CollegesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cutoffs': {
+      id: '/cutoffs'
+      path: '/cutoffs'
+      fullPath: '/cutoffs'
+      preLoaderRoute: typeof CutoffsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard': {
@@ -115,14 +161,23 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CollegesIndexRouteImport
       parentRoute: typeof CollegesRoute
     }
+    '/colleges/$slug': {
+      id: '/colleges/$slug'
+      path: '/$slug'
+      fullPath: '/colleges/$slug'
+      preLoaderRoute: typeof CollegesSlugRouteImport
+      parentRoute: typeof CollegesRoute
+    }
   }
 }
 
 interface CollegesRouteChildren {
+  CollegesSlugRoute: typeof CollegesSlugRoute
   CollegesIndexRoute: typeof CollegesIndexRoute
 }
 
 const CollegesRouteChildren: CollegesRouteChildren = {
+  CollegesSlugRoute: CollegesSlugRoute,
   CollegesIndexRoute: CollegesIndexRoute,
 }
 
@@ -133,6 +188,7 @@ const CollegesRouteWithChildren = CollegesRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CollegesRoute: CollegesRouteWithChildren,
+  CutoffsRoute: CutoffsRoute,
   DashboardRoute: DashboardRoute,
   PredictorRoute: PredictorRoute,
 }
