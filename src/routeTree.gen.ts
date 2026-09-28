@@ -10,33 +10,150 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as CollegesRouteImport } from './routes/colleges'
+import { Route as CompareRouteImport } from './routes/compare'
+import { Route as CounsellingRouteImport } from './routes/counselling'
+import { Route as CutoffsRouteImport } from './routes/cutoffs'
+import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as PredictorRouteImport } from './routes/predictor'
+import { Route as PreferenceListRouteImport } from './routes/preference-list'
+import { Route as CollegesIndexRouteImport } from './routes/colleges.index'
+import { Route as CollegesSlugRouteImport } from './routes/colleges.$slug'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CollegesRoute = CollegesRouteImport.update({
+  id: '/colleges',
+  path: '/colleges',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CompareRoute = CompareRouteImport.update({
+  id: '/compare',
+  path: '/compare',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CounsellingRoute = CounsellingRouteImport.update({
+  id: '/counselling',
+  path: '/counselling',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CutoffsRoute = CutoffsRouteImport.update({
+  id: '/cutoffs',
+  path: '/cutoffs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardRoute = DashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PredictorRoute = PredictorRouteImport.update({
+  id: '/predictor',
+  path: '/predictor',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PreferenceListRoute = PreferenceListRouteImport.update({
+  id: '/preference-list',
+  path: '/preference-list',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CollegesIndexRoute = CollegesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => CollegesRoute,
+} as any)
+const CollegesSlugRoute = CollegesSlugRouteImport.update({
+  id: '/$slug',
+  path: '/$slug',
+  getParentRoute: () => CollegesRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/colleges': typeof CollegesRouteWithChildren
+  '/compare': typeof CompareRoute
+  '/counselling': typeof CounsellingRoute
+  '/cutoffs': typeof CutoffsRoute
+  '/dashboard': typeof DashboardRoute
+  '/predictor': typeof PredictorRoute
+  '/preference-list': typeof PreferenceListRoute
+  '/colleges/$slug': typeof CollegesSlugRoute
+  '/colleges/': typeof CollegesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/compare': typeof CompareRoute
+  '/counselling': typeof CounsellingRoute
+  '/cutoffs': typeof CutoffsRoute
+  '/dashboard': typeof DashboardRoute
+  '/predictor': typeof PredictorRoute
+  '/preference-list': typeof PreferenceListRoute
+  '/colleges/$slug': typeof CollegesSlugRoute
+  '/colleges': typeof CollegesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/colleges': typeof CollegesRouteWithChildren
+  '/compare': typeof CompareRoute
+  '/counselling': typeof CounsellingRoute
+  '/cutoffs': typeof CutoffsRoute
+  '/dashboard': typeof DashboardRoute
+  '/predictor': typeof PredictorRoute
+  '/preference-list': typeof PreferenceListRoute
+  '/colleges/$slug': typeof CollegesSlugRoute
+  '/colleges/': typeof CollegesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/colleges'
+    | '/compare'
+    | '/counselling'
+    | '/cutoffs'
+    | '/dashboard'
+    | '/predictor'
+    | '/preference-list'
+    | '/colleges/$slug'
+    | '/colleges/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/compare'
+    | '/counselling'
+    | '/cutoffs'
+    | '/dashboard'
+    | '/predictor'
+    | '/preference-list'
+    | '/colleges/$slug'
+    | '/colleges'
+  id:
+    | '__root__'
+    | '/'
+    | '/colleges'
+    | '/compare'
+    | '/counselling'
+    | '/cutoffs'
+    | '/dashboard'
+    | '/predictor'
+    | '/preference-list'
+    | '/colleges/$slug'
+    | '/colleges/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CollegesRoute: typeof CollegesRouteWithChildren
+  CompareRoute: typeof CompareRoute
+  CounsellingRoute: typeof CounsellingRoute
+  CutoffsRoute: typeof CutoffsRoute
+  DashboardRoute: typeof DashboardRoute
+  PredictorRoute: typeof PredictorRoute
+  PreferenceListRoute: typeof PreferenceListRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +165,95 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/colleges': {
+      id: '/colleges'
+      path: '/colleges'
+      fullPath: '/colleges'
+      preLoaderRoute: typeof CollegesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/compare': {
+      id: '/compare'
+      path: '/compare'
+      fullPath: '/compare'
+      preLoaderRoute: typeof CompareRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/counselling': {
+      id: '/counselling'
+      path: '/counselling'
+      fullPath: '/counselling'
+      preLoaderRoute: typeof CounsellingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cutoffs': {
+      id: '/cutoffs'
+      path: '/cutoffs'
+      fullPath: '/cutoffs'
+      preLoaderRoute: typeof CutoffsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard': {
+      id: '/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/predictor': {
+      id: '/predictor'
+      path: '/predictor'
+      fullPath: '/predictor'
+      preLoaderRoute: typeof PredictorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/preference-list': {
+      id: '/preference-list'
+      path: '/preference-list'
+      fullPath: '/preference-list'
+      preLoaderRoute: typeof PreferenceListRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/colleges/': {
+      id: '/colleges/'
+      path: '/'
+      fullPath: '/colleges/'
+      preLoaderRoute: typeof CollegesIndexRouteImport
+      parentRoute: typeof CollegesRoute
+    }
+    '/colleges/$slug': {
+      id: '/colleges/$slug'
+      path: '/$slug'
+      fullPath: '/colleges/$slug'
+      preLoaderRoute: typeof CollegesSlugRouteImport
+      parentRoute: typeof CollegesRoute
+    }
   }
 }
 
+interface CollegesRouteChildren {
+  CollegesSlugRoute: typeof CollegesSlugRoute
+  CollegesIndexRoute: typeof CollegesIndexRoute
+}
+
+const CollegesRouteChildren: CollegesRouteChildren = {
+  CollegesSlugRoute: CollegesSlugRoute,
+  CollegesIndexRoute: CollegesIndexRoute,
+}
+
+const CollegesRouteWithChildren = CollegesRoute._addFileChildren(
+  CollegesRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CollegesRoute: CollegesRouteWithChildren,
+  CompareRoute: CompareRoute,
+  CounsellingRoute: CounsellingRoute,
+  CutoffsRoute: CutoffsRoute,
+  DashboardRoute: DashboardRoute,
+  PredictorRoute: PredictorRoute,
+  PreferenceListRoute: PreferenceListRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

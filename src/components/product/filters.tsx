@@ -1,0 +1,11 @@
+"use client";
+import { SlidersHorizontal } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import { cn } from "@/lib/utils";
+
+export interface CollegeFilters { rank:number;branch:string;budget:number;location:string; }
+export function FilterPanel({filters,onChange,className}:{filters:CollegeFilters;onChange:(f:CollegeFilters)=>void;className?:string}) { return <aside className={cn("space-y-6 rounded-lg border border-border bg-card p-5",className)}><div className="flex items-center gap-2 font-semibold"><SlidersHorizontal className="size-4"/>Filters</div><div className="space-y-2"><Label htmlFor="rank">Your COMEDK rank</Label><Input id="rank" inputMode="numeric" value={filters.rank} onChange={e=>onChange({...filters,rank:Number(e.target.value)||0})}/></div><div className="space-y-2"><Label>Branch</Label><Select value={filters.branch} onValueChange={branch=>onChange({...filters,branch})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{["All branches","CSE","AIML","ISE","ECE","EEE"].map(v=><SelectItem value={v} key={v}>{v}</SelectItem>)}</SelectContent></Select></div><div className="space-y-3"><div className="flex justify-between"><Label>Annual budget</Label><span className="font-mono text-xs">₹{(filters.budget/100000).toFixed(1)}L</span></div><Slider min={200000} max={350000} step={10000} value={[filters.budget]} onValueChange={(values)=>onChange({...filters,budget:values.at(0) ?? filters.budget})}/></div><div className="space-y-2"><Label>Location</Label><Select value={filters.location} onValueChange={location=>onChange({...filters,location})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="All">All Karnataka</SelectItem><SelectItem value="Bengaluru">Bengaluru</SelectItem><SelectItem value="Mysuru">Mysuru</SelectItem></SelectContent></Select></div><Button variant="outline" className="w-full" onClick={()=>onChange({rank:18432,branch:"All branches",budget:300000,location:"All"})}>Reset filters</Button></aside>; }
