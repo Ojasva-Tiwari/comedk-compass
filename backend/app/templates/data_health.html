@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>COMEDK Compass - Data Health Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --primary: #3b82f6;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --accent: #6366f1;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 2rem 1.5rem;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .badge-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 2.5rem;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    .card-title {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .card-val {
+      font-size: 2.25rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .card-val.success { color: var(--success); }
+    .card-val.warning { color: var(--warning); }
+    .card-val.danger { color: var(--danger); }
+    .card-sub { font-size: 0.8125rem; color: var(--text-muted); margin-top: 0.25rem; }
+    h2 { font-size: 1.25rem; margin-bottom: 1rem; font-weight: 600; color: #e5e7eb; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.875rem;
+    }
+    th, td {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+    th {
+      background: rgba(31, 41, 55, 0.5);
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    tr:hover td { background: rgba(255, 255, 255, 0.02); }
+    .status-tag {
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .status-success { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+    .status-running { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+    .status-failed { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+    .status-partial { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1 style="font-size: 1.75rem; font-weight: 700;">COMEDK Compass</h1>
+        <p style="color: var(--text-muted); font-size: 0.875rem;">Stage 1 Data Foundation & Ingestion Health Console</p>
+      </div>
+      <div class="badge">
+        <span class="badge-dot"></span>
+        <span>System Status: {{ health.current_ingestion_status }}</span>
+      </div>
+    </header>
+
+    <div class="grid-4">
+      <div class="card">
+        <div class="card-title">Engineering Colleges</div>
+        <div class="card-val">{{ health.college_count }}</div>
+        <div class="card-sub">Official COMEDK verified</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Branches & Courses</div>
+        <div class="card-val">{{ health.branch_count }}</div>
+        <div class="card-sub">Dynamic official registry</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Published Cutoffs</div>
+        <div class="card-val success">{{ health.cutoff_record_count }}</div>
+        <div class="card-sub">Validated rank records</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Seat & Fee Records</div>
+        <div class="card-val">{{ health.seat_record_count + health.fee_record_count }}</div>
+        <div class="card-sub">{{ health.seat_record_count }} seats | {{ health.fee_record_count }} fees</div>
+      </div>
+    </div>
+
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-title">Official Sources & Versions</div>
+        <div class="card-val">{{ health.source_count }}</div>
+        <div class="card-sub">{{ health.source_version_count }} archived document versions (SHA-256)</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Pending / Needs Review</div>
+        <div class="card-val warning">{{ health.pending_validation_records }}</div>
+        <div class="card-sub">Awaiting manual or higher-tier review</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Validation Warnings / Anomalies</div>
+        <div class="card-val danger">{{ health.warnings_anomalies_count }}</div>
+        <div class="card-sub">Fail-closed records safely intercepted</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Recent Ingestion Executions</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Run ID</th>
+            <th>Started (UTC)</th>
+            <th>Status</th>
+            <th>Sources</th>
+            <th>Published</th>
+            <th>Rejected</th>
+            <th>Errors</th>
+            <th>Anomalies</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in health.recent_runs %}
+          <tr>
+            <td style="font-family: monospace; font-size: 0.8rem;">{{ run.id[:8] }}...</td>
+            <td>{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td>
+              <span class="status-tag status-{{ run.status.lower() }}">{{ run.status }}</span>
+            </td>
+            <td>{{ run.source_count }}</td>
+            <td style="color: var(--success); font-weight: 600;">{{ run.published_count }}</td>
+            <td style="color: var(--danger);">{{ run.rejected_count }}</td>
+            <td>{{ run.validation_error_count }}</td>
+            <td>{{ run.anomaly_count }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 2rem;">No ingestion runs recorded yet. Run the pipeline to populate.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>
