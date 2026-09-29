@@ -39,6 +39,14 @@ class BaseParser(ABC):
     def __init__(self, ocr_engine: Optional[OCRInterface] = None):
         self.ocr_engine = ocr_engine
 
+    @property
+    def parser_name(self) -> str:
+        return self.__class__.__name__
+
+    @property
+    def parser_version(self) -> str:
+        return "v1.0.0"
+
     @abstractmethod
     def parse(self, content: bytes, context: Optional[Dict[str, Any]] = None) -> ParseResult:
         """

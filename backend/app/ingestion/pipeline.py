@@ -2,11 +2,20 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Set, Tuple
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from bs4 import BeautifulSoup
 from backend.app.config import settings
-from backend.app.core.enums import RecordStatus, DocumentType, RunStatus, ValidationSeverity, InstitutionType
+from backend.app.core.enums import (
+    RecordStatus,
+    DocumentType,
+    RunStatus,
+    ValidationSeverity,
+    InstitutionType,
+    ProgramType,
+    FailureReason,
+    ReviewStatus,
+)
 from backend.app.models import (
     IngestionRun,
     Source,
@@ -21,13 +30,17 @@ from backend.app.models import (
     SeatRecord,
     FeeRecord,
     ValidationError,
+    IngestionReviewItem,
 )
 from backend.app.ingestion.archiver import DocumentArchiver
+from backend.app.ingestion.downloader import DocumentDownloader, DownloaderError, CorruptDocumentError
 from backend.app.ingestion.discovery import OfficialSourceDiscovery, DiscoveredSource
 from backend.app.ingestion.normalizer import Normalizer
-from backend.app.ingestion.parsers.college_parser import CollegeParser
-from backend.app.ingestion.parsers.cutoff_pdf_parser import CutoffPDFParser
-from backend.app.ingestion.parsers.seat_and_fee_parser import SeatAndFeeParser
+from backend.app.ingestion.source_registry import SourceRegistryService
+from backend.app.ingestion.parsers.registry import ParserRegistry, NoParserAvailableError
+from backend.app.ingestion.review_queue import ReviewQueueService
+from backend.app.ingestion.health import SourceHealthService
+from backend.app.ingestion.classifier import DocumentClassifier
 from backend.app.ingestion.validator import DataValidator, ValidationErrorItem
 
 class IngestionPipeline:
@@ -35,10 +48,15 @@ class IngestionPipeline:
         self.db = db
         self.academic_year = academic_year
         self.archiver = DocumentArchiver()
+        self.downloader = DocumentDownloader()
+        self.source_registry = SourceRegistryService(db)
         self.discovery = OfficialSourceDiscovery(academic_year=academic_year)
-        self.college_parser = CollegeParser()
-        self.cutoff_parser = CutoffPDFParser()
-        self.seat_fee_parser = SeatAndFeeParser()
+        self.parser_registry = ParserRegistry()
+        self.college_parser = self.parser_registry.get_parser(DocumentType.MEMBER_INSTITUTIONS_HTML.value)
+        self.cutoff_parser = self.parser_registry.get_parser(DocumentType.CUTOFF_PDF.value)
+        self.seat_fee_parser = self.parser_registry.get_parser(DocumentType.SEAT_MATRIX_PDF.value)
+        self.review_queue = ReviewQueueService(db)
+        self.health = SourceHealthService(db)
 
     def _seed_base_reference_data(self) -> Tuple[Dict[str, Category], Dict[str, CounsellingRound]]:
         # Seed standard categories
@@ -65,23 +83,25 @@ class IngestionPipeline:
             ("R4", "Round 4", 4),
         ]
         round_map: Dict[str, CounsellingRound] = {}
-        for code, name, num in standard_rounds:
-            rnd = self.db.execute(
-                select(CounsellingRound).where(
-                    CounsellingRound.academic_year == self.academic_year,
-                    CounsellingRound.code == code
-                )
-            ).scalar_one_or_none()
-            if not rnd:
-                rnd = CounsellingRound(
-                    code=code,
-                    name=name,
-                    academic_year=self.academic_year,
-                    round_number=num
-                )
-                self.db.add(rnd)
-                self.db.flush()
-            round_map[code] = rnd
+        for yr in (self.academic_year, 2025):
+            for code, name, num in standard_rounds:
+                rnd = self.db.execute(
+                    select(CounsellingRound).where(
+                        CounsellingRound.academic_year == yr,
+                        CounsellingRound.code == code
+                    )
+                ).scalar_one_or_none()
+                if not rnd:
+                    rnd = CounsellingRound(
+                        code=code,
+                        name=name,
+                        academic_year=yr,
+                        round_number=num
+                    )
+                    self.db.add(rnd)
+                    self.db.flush()
+                if yr == self.academic_year:
+                    round_map[code] = rnd
 
         self.db.commit()
         return cat_map, round_map
@@ -130,6 +150,9 @@ class IngestionPipeline:
         try:
             cat_map, round_map = self._seed_base_reference_data()
 
+            # 0. Sync registered official sources
+            self.source_registry.sync_registered_sources()
+
             # 1. Official Source Discovery
             discovered_sources: List[DiscoveredSource] = await self.discovery.discover_all()
             stats["documents_discovered"] = len(discovered_sources)
@@ -160,28 +183,58 @@ class IngestionPipeline:
 
             for disc in ordered_sources:
                 try:
-                    # Upsert Source registry record
+                    # Upsert / sync Source registry record
                     source_db = self.db.execute(select(Source).where(Source.url == disc.url)).scalar_one_or_none()
                     if not source_db:
                         source_db = Source(
+                            source_code=f"DISC_{disc.academic_year}_{disc.document_type}_{uuid.uuid4().hex[:6]}",
+                            source_type="OFFICIAL_DISCOVERED",
                             url=disc.url,
                             title=disc.title,
                             publisher=disc.publisher,
                             document_type=disc.document_type,
-                            academic_year=disc.academic_year
+                            academic_year=disc.academic_year,
+                            is_enabled=True,
+                            parser_version=settings.PARSER_VERSION
                         )
                         self.db.add(source_db)
                         self.db.flush()
 
-                    # Download and archive
+                    # Record source check
+                    self.source_registry.record_check(source_db.id)
+
+                    # Download and archive with safe DocumentDownloader
                     try:
-                        content, content_hash, local_path, file_size, content_type = await self.archiver.download_and_archive(
+                        content, content_hash, local_path, file_size, content_type = await self.downloader.download_and_archive(
                             url=disc.url,
                             academic_year=disc.academic_year,
-                            doc_type=disc.document_type
+                            document_type=disc.document_type
                         )
                         stats["documents_downloaded"] += 1
-                    except Exception as e:
+                        self.source_registry.record_success(source_db.id, content_hash=content_hash)
+                    except CorruptDocumentError as cde:
+                        stats["documents_failed"] += 1
+                        stats["parser_failures"] += 1
+                        self._record_error(
+                            run_id=run_record.id,
+                            source_version_id=None,
+                            entity_type="SOURCE",
+                            entity_id=disc.url,
+                            code="CORRUPT_DOCUMENT",
+                            msg=str(cde),
+                            severity=ValidationSeverity.CRITICAL.value
+                        )
+                        self.review_queue.add_review_item(
+                            source_id=source_db.id,
+                            document_type=disc.document_type,
+                            document_url=disc.url,
+                            failure_reason=FailureReason.CORRUPT_DOCUMENT.value,
+                            ingestion_run_id=run_record.id,
+                            parser_version=settings.PARSER_VERSION,
+                            review_notes=str(cde)
+                        )
+                        continue
+                    except DownloaderError as de:
                         stats["documents_failed"] += 1
                         stats["parser_failures"] += 1
                         self._record_error(
@@ -190,10 +243,49 @@ class IngestionPipeline:
                             entity_type="SOURCE",
                             entity_id=disc.url,
                             code="DOWNLOAD_FAILED",
+                            msg=str(de),
+                            severity=ValidationSeverity.ERROR.value
+                        )
+                        self.review_queue.add_review_item(
+                            source_id=source_db.id,
+                            document_type=disc.document_type,
+                            document_url=disc.url,
+                            failure_reason=FailureReason.DOWNLOAD_FAILED.value,
+                            ingestion_run_id=run_record.id,
+                            parser_version=settings.PARSER_VERSION,
+                            review_notes=str(de)
+                        )
+                        continue
+                    except Exception as e:
+                        stats["documents_failed"] += 1
+                        stats["parser_failures"] += 1
+                        self._record_error(
+                            run_id=run_record.id,
+                            source_version_id=None,
+                            entity_type="SOURCE",
+                            entity_id=disc.url,
+                            code="DOWNLOAD_UNEXPECTED_ERROR",
                             msg=f"Failed to download {disc.url}: {e}",
                             severity=ValidationSeverity.ERROR.value
                         )
+                        self.review_queue.add_review_item(
+                            source_id=source_db.id,
+                            document_type=disc.document_type,
+                            document_url=disc.url,
+                            failure_reason=FailureReason.DOWNLOAD_FAILED.value,
+                            ingestion_run_id=run_record.id,
+                            parser_version=settings.PARSER_VERSION,
+                            review_notes=f"Unexpected download failure: {e}"
+                        )
                         continue
+
+                    # Document type detection / normalization
+                    detected_type = disc.document_type
+                    if detected_type in (DocumentType.OTHER.value, DocumentType.UNKNOWN.value):
+                        classified_type, classified_round = DocumentClassifier.classify_with_round(f"{disc.title} {disc.url}")
+                        detected_type = classified_type
+                        if classified_round and not disc.counselling_round:
+                            disc.counselling_round = classified_round
 
                     # Upsert SourceVersion record
                     sv = self.db.execute(
@@ -211,7 +303,7 @@ class IngestionPipeline:
                             source_title=disc.title,
                             publisher=disc.publisher,
                             academic_year=disc.academic_year,
-                            document_type=disc.document_type,
+                            document_type=detected_type,
                             counselling_round=disc.counselling_round,
                             publication_date=disc.publication_date,
                             content_hash=content_hash,
@@ -226,20 +318,39 @@ class IngestionPipeline:
                     else:
                         stats["documents_already_archived"] += 1
 
+                    # Check parser availability from ParserRegistry
+                    if not self.parser_registry.has_parser(detected_type) and detected_type != DocumentType.COUNSELLING_PORTAL_HTML.value:
+                        stats["documents_needs_review"] += 1
+                        sv.processing_status = RecordStatus.NEEDS_REVIEW.value
+                        self.review_queue.add_review_item(
+                            source_id=source_db.id,
+                            source_version_id=sv.id,
+                            document_type=detected_type,
+                            document_url=disc.url,
+                            failure_reason=FailureReason.UNSUPPORTED_DOCUMENT_TYPE.value,
+                            ingestion_run_id=run_record.id,
+                            parser_version=settings.PARSER_VERSION,
+                            review_notes=f"No parser available for detected document type '{detected_type}'"
+                        )
+                        self.db.commit()
+                        continue
+
                     # 2. Parse depending on document type
-                    if disc.document_type in (DocumentType.MEMBER_INSTITUTIONS_HTML.value, DocumentType.BE_COLLEGES_HTML.value):
-                        parse_res = self.college_parser.parse(content)
+                    if detected_type in (DocumentType.MEMBER_INSTITUTIONS_HTML.value, DocumentType.BE_COLLEGES_HTML.value):
+                        parser = self.parser_registry.get_parser(detected_type)
+                        parse_res = parser.parse(content)
                         stats["documents_parsed"] += 1
                         self._ingest_colleges(parse_res.discovered_colleges, sv.id, stats)
 
-                    elif disc.document_type == DocumentType.COUNSELLING_PORTAL_HTML.value:
+                    elif detected_type == DocumentType.COUNSELLING_PORTAL_HTML.value:
                         official_branches = self._extract_branches_from_counselling_portal(content)
                         stats["documents_parsed"] += 1
                         if official_branches:
                             self._ingest_branches(official_branches, stats)
 
-                    elif disc.document_type in (DocumentType.SEAT_MATRIX_PDF.value, DocumentType.FEE_STRUCTURE_PDF.value):
-                        parse_res = self.seat_fee_parser.parse(content, {"academic_year": disc.academic_year})
+                    elif detected_type in (DocumentType.SEAT_MATRIX_PDF.value, DocumentType.FEE_STRUCTURE_PDF.value, DocumentType.VACANT_SEATS_PDF.value):
+                        parser = self.parser_registry.get_parser(detected_type)
+                        parse_res = parser.parse(content, {"academic_year": disc.academic_year})
                         stats["documents_parsed"] += 1
                         if parse_res.discovered_branches:
                             self._ingest_branches(parse_res.discovered_branches, stats)
@@ -247,8 +358,9 @@ class IngestionPipeline:
                             self._ingest_colleges(parse_res.discovered_colleges, sv.id, stats)
                         self._ingest_seat_and_fee_records(parse_res, sv.id, stats)
 
-                    elif disc.document_type == DocumentType.CUTOFF_PDF.value:
-                        parse_res = self.cutoff_parser.parse(content, {
+                    elif detected_type == DocumentType.CUTOFF_PDF.value:
+                        parser = self.parser_registry.get_parser(detected_type)
+                        parse_res = parser.parse(content, {
                             "academic_year": disc.academic_year,
                             "counselling_round": disc.counselling_round or "R1"
                         })
@@ -257,7 +369,17 @@ class IngestionPipeline:
                         if not parse_res.is_usable_text:
                             stats["documents_needs_review"] += 1
                             sv.processing_status = RecordStatus.NEEDS_REVIEW.value
-                            self.db.flush()
+                            self.review_queue.add_review_item(
+                                source_id=source_db.id,
+                                source_version_id=sv.id,
+                                document_type=detected_type,
+                                document_url=disc.url,
+                                failure_reason=FailureReason.SCANNED_PDF.value,
+                                ingestion_run_id=run_record.id,
+                                parser_version=settings.PARSER_VERSION,
+                                review_notes="PDF has non-extractable text (scanned or image-based); manual review or OCR required."
+                            )
+                            self.db.commit()
                             continue
 
                         # Register any newly discovered branches & colleges from the cutoff PDF
@@ -277,7 +399,8 @@ class IngestionPipeline:
                         )
                         stats["parsing_reports"].append(doc_report)
 
-                    sv.processing_status = RecordStatus.PUBLISHED.value
+                    if sv.processing_status != RecordStatus.NEEDS_REVIEW.value:
+                        sv.processing_status = RecordStatus.PUBLISHED.value
                     self.db.commit()
 
                 except Exception as e:
@@ -493,8 +616,10 @@ class IngestionPipeline:
         run_id: uuid.UUID,
         stats: Dict[str, int]
     ):
+        if stats is None:
+            stats = {}
         raw_records = parse_res.records
-        stats["records_parsed"] += len(raw_records)
+        stats["records_parsed"] = stats.get("records_parsed", 0) + len(raw_records)
 
         college_map = {c.code: c.id for c in self.db.execute(select(College)).scalars().all()}
         branch_map = {b.code: b.id for b in self.db.execute(select(Branch)).scalars().all()}
@@ -512,10 +637,10 @@ class IngestionPipeline:
             academic_year=sv.academic_year
         )
 
-        stats["records_validated"] += len(valid_records)
-        stats["records_rejected"] += len(validation_errors)
-        stats["validation_errors"] += len(validation_errors)
-        stats["anomalies"] += len(anomalies)
+        stats["records_validated"] = stats.get("records_validated", 0) + len(valid_records)
+        stats["records_rejected"] = stats.get("records_rejected", 0) + len(validation_errors)
+        stats["validation_errors"] = stats.get("validation_errors", 0) + len(validation_errors)
+        stats["anomalies"] = stats.get("anomalies", 0) + len(anomalies)
 
         # Log validation errors to database
         for err in validation_errors:
@@ -542,6 +667,78 @@ class IngestionPipeline:
                 severity=anom.severity,
                 ctx=anom.context_data
             )
+
+        # Batch Completeness Check (Fail Closed for full cutoff documents)
+        is_corrigendum = "corrigendum" in (sv.source_title or "").lower() or "corrigendum" in (sv.source_url or "").lower()
+        completeness_errors = []
+        if not is_corrigendum:
+            # Determine document program type (Engineering vs Architecture)
+            doc_program_type = DocumentClassifier.extract_program_type(f"{sv.source_title} {sv.source_url}")
+            if valid_records and all(r.get("branch_code") in ("AT", "AR") for r in valid_records):
+                doc_program_type = ProgramType.ARCHITECTURE.value
+
+            rnd_code = sv.counselling_round or "R1"
+            rnd_id_val = round_map_db.get(rnd_code)
+            existing_baseline = 0
+            if rnd_id_val:
+                existing_baseline = self.db.execute(
+                    select(func.count(CutoffRecord.id))
+                    .join(Branch, CutoffRecord.branch_id == Branch.id)
+                    .where(
+                        CutoffRecord.academic_year == sv.academic_year,
+                        CutoffRecord.round_id == rnd_id_val,
+                        CutoffRecord.status == RecordStatus.PUBLISHED.value,
+                        Branch.program_type == doc_program_type
+                    )
+                ).scalar_one()
+
+            completeness_errors = validator.validate_batch_completeness(
+                doc_type="CUTOFF_PDF",
+                extracted_count=len(valid_records),
+                historical_baseline_count=existing_baseline if existing_baseline > 0 else None,
+                program_type=doc_program_type
+            )
+
+        if completeness_errors:
+            stats["records_needs_review"] = stats.get("records_needs_review", 0) + len(valid_records)
+            stats["documents_needs_review"] = stats.get("documents_needs_review", 0) + 1
+            sv.processing_status = RecordStatus.NEEDS_REVIEW.value
+            for err in completeness_errors:
+                self._record_error(
+                    run_id=run_id,
+                    source_version_id=sv.id,
+                    entity_type=err.entity_type,
+                    entity_id=err.entity_identifier,
+                    code=err.error_code,
+                    msg=err.message,
+                    severity=err.severity,
+                    ctx=err.context_data
+                )
+            self.review_queue.add_review_item(
+                source_id=sv.source_id,
+                source_version_id=sv.id,
+                ingestion_run_id=run_id,
+                document_type=sv.document_type,
+                document_url=sv.source_url,
+                failure_reason=FailureReason.SUSPICIOUS_LOW_COUNT.value,
+                validation_errors=[{"code": e.error_code, "message": e.message, "context": e.context_data} for e in completeness_errors],
+                parser_version=sv.parser_version,
+                review_notes=f"Completeness validation failed: {completeness_errors[0].message}"
+            )
+            self.db.commit()
+            return {
+                "source_title": sv.source_title,
+                "academic_year": sv.academic_year,
+                "counselling_round": sv.counselling_round,
+                "status": "NEEDS_REVIEW",
+                "failure_reason": FailureReason.SUSPICIOUS_LOW_COUNT.value,
+                "candidate_records": len(raw_records),
+                "validated_records": len(valid_records),
+                "published_records": 0,
+                "verified_unchanged_records": 0,
+                "superseded_records": 0,
+                "factual_changes": 0
+            }
 
         val_colleges = {r["college_code"] for r in valid_records}
         val_branches = {r["branch_code"] for r in valid_records}
@@ -622,10 +819,12 @@ class IngestionPipeline:
                 status=RecordStatus.PUBLISHED.value
             )
             self.db.add(cutoff)
-            stats["records_published"] += 1
+            stats["records_published"] = stats.get("records_published", 0) + 1
             published_count += 1
 
         self.db.flush()
+        if sv.processing_status != RecordStatus.NEEDS_REVIEW.value:
+            sv.processing_status = RecordStatus.PUBLISHED.value
 
         doc_report = {
             "source_title": sv.source_title,
@@ -646,7 +845,8 @@ class IngestionPipeline:
             "published_records": published_count,
             "verified_unchanged_records": verified_unchanged_count,
             "superseded_records": superseded_count,
-            "factual_changes": 0
+            "factual_changes": 0,
+            "status": "PUBLISHED"
         }
 
         print(
@@ -663,7 +863,7 @@ class IngestionPipeline:
 
     def _record_error(
         self,
-        run_id: uuid.UUID,
+        run_id: Optional[uuid.UUID],
         source_version_id: Optional[uuid.UUID],
         entity_type: str,
         entity_id: Optional[str],
@@ -672,8 +872,22 @@ class IngestionPipeline:
         severity: str = ValidationSeverity.ERROR.value,
         ctx: Optional[Dict[str, Any]] = None
     ):
+        from backend.app.models.ingestion import IngestionRun
+        valid_run_id = None
+        if run_id and self.db.get(IngestionRun, run_id):
+            valid_run_id = run_id
+        else:
+            latest = self.db.execute(select(IngestionRun).order_by(IngestionRun.started_at.desc())).scalars().first()
+            if latest:
+                valid_run_id = latest.id
+            else:
+                new_run = IngestionRun(started_at=datetime.now(timezone.utc), status=RunStatus.RUNNING.value)
+                self.db.add(new_run)
+                self.db.flush()
+                valid_run_id = new_run.id
+
         err = ValidationError(
-            ingestion_run_id=run_id,
+            ingestion_run_id=valid_run_id,
             source_version_id=source_version_id,
             entity_type=entity_type,
             entity_identifier=entity_id,

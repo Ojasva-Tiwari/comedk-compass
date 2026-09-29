@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Tuple, Optional, Set
 from uuid import UUID
-from backend.app.core.enums import RecordStatus, ValidationSeverity
+from backend.app.config import settings
+from backend.app.core.enums import RecordStatus, ValidationSeverity, DocumentType, ProgramType
 
 class ValidationErrorItem:
     def __init__(
@@ -26,15 +27,44 @@ class DataValidator:
     """
     MAX_REASONABLE_RANK = 250000
 
+    DEFAULT_COMPLETENESS_THRESHOLDS: Dict[Any, int] = {
+        ("CUTOFF_PDF", "ENGINEERING"): 50,
+        ("CUTOFF_PDF", "ARCHITECTURE"): 4,
+        "ENGINEERING_CUTOFF": 50,
+        "ARCHITECTURE_CUTOFF": 4,
+    }
+
     def __init__(
         self,
         known_college_codes: Set[str],
         known_branch_codes: Set[str],
         known_categories: Set[str],
+        completeness_thresholds: Optional[Dict[Any, int]] = None,
     ):
         self.known_college_codes = known_college_codes
         self.known_branch_codes = known_branch_codes
         self.known_categories = known_categories
+        self.completeness_thresholds = dict(self.DEFAULT_COMPLETENESS_THRESHOLDS)
+        if completeness_thresholds:
+            self.completeness_thresholds.update(completeness_thresholds)
+
+    def get_completeness_threshold(self, doc_type: str, program_type: Optional[str] = None) -> int:
+        ptype = (program_type or ProgramType.ENGINEERING.value).upper()
+        dtype = (doc_type or "").upper()
+
+        if (dtype, ptype) in self.completeness_thresholds:
+            return self.completeness_thresholds[(dtype, ptype)]
+
+        compound_key = f"{ptype}_{dtype.replace('_PDF', '')}"
+        if compound_key in self.completeness_thresholds:
+            return self.completeness_thresholds[compound_key]
+
+        if dtype in self.completeness_thresholds:
+            return self.completeness_thresholds[dtype]
+
+        if ptype == ProgramType.ARCHITECTURE.value:
+            return getattr(settings, "MIN_CUTOFF_THRESHOLD_ARCHITECTURE", 4)
+        return getattr(settings, "MIN_CUTOFF_THRESHOLD_ENGINEERING", 50)
 
     def validate_cutoff_records(
         self,
@@ -83,7 +113,20 @@ class DataValidator:
                 ))
                 continue
 
-            # 3. Category validity check
+            # 3. Round validity check
+            valid_rounds = {"R1", "R2", "R3", "R4", "MOCK"}
+            if not r_code or r_code not in valid_rounds:
+                errors.append(ValidationErrorItem(
+                    entity_type="CUTOFF",
+                    entity_identifier=row_id,
+                    error_code="INVALID_COUNSELLING_ROUND",
+                    message=f"Invalid counselling round '{r_code}'. Expected one of {valid_rounds}",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"round": r_code}
+                ))
+                continue
+
+            # 4. Category validity check
             if not cat_code or cat_code not in self.known_categories:
                 anomalies.append(ValidationErrorItem(
                     entity_type="CUTOFF",
@@ -94,7 +137,7 @@ class DataValidator:
                     context_data={"category": cat_code}
                 ))
 
-            # 4. Rank positivity check
+            # 5. Rank positivity check
             if c_rank is None or c_rank <= 0:
                 errors.append(ValidationErrorItem(
                     entity_type="CUTOFF",
@@ -106,7 +149,7 @@ class DataValidator:
                 ))
                 continue
 
-            # 5. Opening rank relationship
+            # 6. Opening rank relationship
             if o_rank is not None:
                 if o_rank <= 0:
                     errors.append(ValidationErrorItem(
@@ -128,7 +171,7 @@ class DataValidator:
                     ))
                     continue
 
-            # 6. Rank upper bound anomaly check
+            # 7. Rank upper bound anomaly check
             if c_rank > self.MAX_REASONABLE_RANK:
                 anomalies.append(ValidationErrorItem(
                     entity_type="CUTOFF",
@@ -139,7 +182,7 @@ class DataValidator:
                     context_data={"closing_rank": c_rank}
                 ))
 
-            # 7. Duplicate logical key check
+            # 8. Duplicate logical key check
             logical_key = (c_code, b_code, cat_code, r_code, academic_year)
             if logical_key in seen_logical_keys:
                 errors.append(ValidationErrorItem(
@@ -158,6 +201,95 @@ class DataValidator:
             valid_records.append(rec)
 
         return valid_records, errors, anomalies
+
+    def validate_batch_completeness(
+        self,
+        doc_type: str,
+        extracted_count: int,
+        historical_baseline_count: Optional[int] = None,
+        program_type: Optional[str] = None,
+        minimum_threshold: Optional[int] = None
+    ) -> List[ValidationErrorItem]:
+        """
+        Enforces FAIL CLOSED principle for truncated, suspicious, or unknown parses.
+        Prevents an incomplete parse (e.g., 37 engineering records when 1,200 expected,
+        or 2 architecture records when 4 expected) from superseding good data.
+
+        Configurable by document type and program type (Engineering vs Architecture).
+        Unknown document types automatically fail closed and are routed to review.
+        """
+        errors: List[ValidationErrorItem] = []
+
+        # 1. Unknown or unrecognized document types fail closed
+        if not doc_type or doc_type in (DocumentType.UNKNOWN.value, "UNKNOWN", "OTHER"):
+            errors.append(ValidationErrorItem(
+                entity_type="DOCUMENT",
+                entity_identifier=doc_type or "UNKNOWN",
+                error_code="UNKNOWN_DOCUMENT_TYPE",
+                message=f"Document type '{doc_type}' cannot be verified for batch completeness; requires manual review.",
+                severity=ValidationSeverity.CRITICAL.value,
+                context_data={"doc_type": doc_type, "extracted_count": extracted_count}
+            ))
+            return errors
+
+        # 2. Cutoff PDF Completeness Validation
+        if doc_type == DocumentType.CUTOFF_PDF.value:
+            ptype = (program_type or ProgramType.ENGINEERING.value).upper()
+            resolved_min = (
+                minimum_threshold
+                if minimum_threshold is not None
+                else self.get_completeness_threshold(doc_type, ptype)
+            )
+
+            # Truly incomplete data: 0 or negative records
+            if extracted_count <= 0:
+                errors.append(ValidationErrorItem(
+                    entity_type="DOCUMENT",
+                    entity_identifier=doc_type,
+                    error_code="SUSPICIOUS_LOW_COUNT",
+                    message=f"Parsed 0 cutoff records for {ptype}; document is empty or unparseable.",
+                    severity=ValidationSeverity.CRITICAL.value,
+                    context_data={"extracted": extracted_count, "minimum": resolved_min, "program_type": ptype}
+                ))
+                return errors
+
+            # Engineering strict historical baseline check (>100 records baseline, 30% threshold)
+            if ptype == ProgramType.ENGINEERING.value and historical_baseline_count and historical_baseline_count > 100:
+                dynamic_threshold = int(historical_baseline_count * 0.3)
+                if extracted_count < dynamic_threshold:
+                    errors.append(ValidationErrorItem(
+                        entity_type="DOCUMENT",
+                        entity_identifier=doc_type,
+                        error_code="SUSPICIOUS_LOW_COUNT",
+                        message=(
+                            f"Suspiciously low {ptype} record count: parsed {extracted_count} records, "
+                            f"which is far below the baseline of {historical_baseline_count} (threshold: {dynamic_threshold})"
+                        ),
+                        severity=ValidationSeverity.CRITICAL.value,
+                        context_data={
+                            "extracted": extracted_count,
+                            "baseline": historical_baseline_count,
+                            "threshold": dynamic_threshold,
+                            "program_type": ptype
+                        }
+                    ))
+                    return errors
+
+            # Check against program-specific minimum threshold (e.g. 50 for Engineering, 4 for Architecture)
+            if extracted_count < resolved_min:
+                errors.append(ValidationErrorItem(
+                    entity_type="DOCUMENT",
+                    entity_identifier=doc_type,
+                    error_code="SUSPICIOUS_LOW_COUNT",
+                    message=(
+                        f"{ptype} cutoff parse yielded only {extracted_count} records "
+                        f"(minimum expected: {resolved_min})"
+                    ),
+                    severity=ValidationSeverity.CRITICAL.value,
+                    context_data={"extracted": extracted_count, "minimum": resolved_min, "program_type": ptype}
+                ))
+
+        return errors
 
     def validate_document_anomaly(
         self,
@@ -183,3 +315,4 @@ class DataValidator:
                 severity=ValidationSeverity.WARNING.value
             ))
         return anomalies
+

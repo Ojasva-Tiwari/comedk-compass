@@ -130,8 +130,10 @@ class OfficialSourceDiscovery:
                         if full_url.lower().endswith(".pdf") or any(kw in combined_text.lower() for kw in [
                             "cut-off", "cutoff", "cut_off", "cut off", "seat", "fee", "notification", "counselling"
                         ]):
-                            doc_type = self.identify_document_type(combined_text)
-                            c_round = self.identify_round(combined_text)
+                            from backend.app.ingestion.classifier import DocumentClassifier
+                            doc_type = DocumentClassifier.classify(combined_text)
+                            c_round = DocumentClassifier.extract_counselling_round(combined_text)
+                            doc_year = DocumentClassifier.extract_academic_year(combined_text, default=self.academic_year)
                             pub_date = self.extract_publication_date(combined_text) or self.extract_publication_date(full_url)
 
                             # Clean title
@@ -143,7 +145,7 @@ class OfficialSourceDiscovery:
                                 url=full_url,
                                 title=title,
                                 document_type=doc_type,
-                                academic_year=self.academic_year,
+                                academic_year=doc_year,
                                 counselling_round=c_round,
                                 publication_date=pub_date
                             ))

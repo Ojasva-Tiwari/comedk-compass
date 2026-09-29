@@ -24,5 +24,8 @@ class Settings(BaseSettings):
     USER_AGENT: str = Field(default="COMEDK-Compass-Ingestion/1.0 (+https://comedk-compass.local)")
     
     PARSER_VERSION: str = Field(default="1.0.0")
+    
+    MIN_CUTOFF_THRESHOLD_ENGINEERING: int = Field(default=50)
+    MIN_CUTOFF_THRESHOLD_ARCHITECTURE: int = Field(default=4)
 
 settings = Settings()

@@ -28,3 +28,4 @@ class IngestionRun(Base, UUIDPrimaryKeyMixin):
 
     source_versions = relationship("SourceVersion", back_populates="ingestion_run")
     validation_errors = relationship("ValidationError", back_populates="ingestion_run")
+    review_items = relationship("IngestionReviewItem", back_populates="ingestion_run")

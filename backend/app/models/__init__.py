@@ -10,6 +10,7 @@ from backend.app.models.cutoff import CutoffRecord
 from backend.app.models.seat import SeatRecord
 from backend.app.models.fee import FeeRecord
 from backend.app.models.validation import ValidationError
+from backend.app.models.review import IngestionReviewItem
 
 __all__ = [
     "Base",
@@ -28,4 +29,5 @@ __all__ = [
     "SeatRecord",
     "FeeRecord",
     "ValidationError",
+    "IngestionReviewItem",
 ]

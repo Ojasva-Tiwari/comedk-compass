@@ -1,23 +1,40 @@
 import uuid
 from datetime import datetime, date
-from typing import Optional
-from sqlalchemy import String, Integer, DateTime, Date, ForeignKey, Index, BigInteger
+from typing import Optional, List
+from sqlalchemy import String, Integer, DateTime, Date, ForeignKey, Index, BigInteger, Boolean, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from backend.app.database import Base
 from backend.app.models.base import UUIDPrimaryKeyMixin, TimestampMixin, utc_now
-from backend.app.core.enums import RecordStatus
+from backend.app.core.enums import RecordStatus, SourceAuthorityLevel
 
 class Source(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "sources"
 
+    source_code: Mapped[Optional[str]] = mapped_column(String(100), unique=True, nullable=True, index=True)
+    source_type: Mapped[str] = mapped_column(String(50), default="OFFICIAL_PORTAL", nullable=False)
     url: Mapped[str] = mapped_column(String(1024), unique=True, nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     publisher: Mapped[str] = mapped_column(String(255), default="COMEDK", nullable=False)
+    authority_level: Mapped[str] = mapped_column(
+        String(50),
+        default=SourceAuthorityLevel.OFFICIAL_PRIMARY.value,
+        nullable=False
+    )
     document_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     academic_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    check_frequency_hours: Mapped[int] = mapped_column(Integer, default=24, nullable=False)
+    expected_document_types: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    
+    last_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_success_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    parser_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    parser_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     versions = relationship("SourceVersion", back_populates="source", cascade="all, delete-orphan")
+    review_items = relationship("IngestionReviewItem", back_populates="source", cascade="all, delete-orphan")
 
 class SourceVersion(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "source_versions"
@@ -61,6 +78,7 @@ class SourceVersion(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     source = relationship("Source", back_populates="versions")
     ingestion_run = relationship("IngestionRun", back_populates="source_versions")
     validation_errors = relationship("ValidationError", back_populates="source_version")
+    review_items = relationship("IngestionReviewItem", back_populates="source_version")
     
     cutoff_records = relationship("CutoffRecord", back_populates="source_version")
     seat_records = relationship("SeatRecord", back_populates="source_version")
