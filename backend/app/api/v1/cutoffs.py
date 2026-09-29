@@ -21,7 +21,7 @@ def list_cutoffs(
     college_id: Optional[uuid.UUID] = Query(None, description="Filter by college ID"),
     branch_id: Optional[uuid.UUID] = Query(None, description="Filter by branch ID"),
     category_code: Optional[str] = Query(None, description="Filter by category code (e.g. GM, KKR)"),
-    round_code: Optional[str] = Query(None, description="Filter by round code (e.g. R1, R2)"),
+    round_code: Optional[str] = Query(None, description="Filter by round code (e.g. R1, R3, R4, KKR_SPECIAL)"),
     academic_year: Optional[int] = Query(None, description="Filter by academic year"),
     institution_type: Optional[str] = Query(
         InstitutionType.ENGINEERING.value,
@@ -30,6 +30,10 @@ def list_cutoffs(
     program_type: Optional[str] = Query(
         ProgramType.ENGINEERING.value,
         description="Filter by program type: ENGINEERING, ARCHITECTURE, DESIGN, or ALL"
+    ),
+    include_special_rounds: bool = Query(
+        False,
+        description="Include non-general specialized rounds such as KKR_SPECIAL (default False)"
     ),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -55,8 +59,16 @@ def list_cutoffs(
         stmt = stmt.where(CutoffRecord.academic_year == academic_year)
     if category_code:
         stmt = stmt.join(Category).where(Category.code == category_code.upper())
+
+    # Round filtering: by default exclude specialized rounds (KKR_SPECIAL) from general pathway
     if round_code:
-        stmt = stmt.join(CounsellingRound).where(CounsellingRound.code == round_code.upper())
+        stmt = stmt.join(CounsellingRound, CutoffRecord.round_id == CounsellingRound.id).where(
+            CounsellingRound.code == round_code.upper()
+        )
+    elif not include_special_rounds:
+        stmt = stmt.join(CounsellingRound, CutoffRecord.round_id == CounsellingRound.id).where(
+            CounsellingRound.is_general_round.is_(True)
+        )
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = db.scalar(count_stmt) or 0

@@ -117,8 +117,8 @@ class Normalizer:
             return "MOCK", "Mock Round", 0
         if "ROUND 1" in r_str or "ROUND-1" in r_str or "R1" in r_str or "ROUND_1" in r_str:
             return "R1", "Round 1", 1
-        if "ROUND 2" in r_str or "ROUND-2" in r_str or "R2" in r_str or "ROUND_2" in r_str:
-            return "R2", "Round 2", 2
+        if "KKR" in r_str or "ROUND 2" in r_str or "ROUND-2" in r_str or "R2" in r_str or "ROUND_2" in r_str:
+            return "KKR_SPECIAL", "Round 2 KKR Special Allotment", 2
         if "ROUND 3" in r_str or "ROUND-3" in r_str or "R3" in r_str or "ROUND_3" in r_str:
             return "R3", "Round 3", 3
         if "ROUND 4" in r_str or "ROUND-4" in r_str or "R4" in r_str or "ROUND_4" in r_str:

@@ -48,17 +48,18 @@ class DocumentClassifier:
 
     @classmethod
     def extract_counselling_round(cls, text_or_url: str) -> Optional[str]:
-        s = text_or_url.lower()
+        s = text_or_url.lower().replace("_", " ").replace("-", " ")
         if "mock" in s:
             return "MOCK"
         # Match Round 1, R1, Round-1, Round_1
-        if re.search(r'\b(round[-_\s]*1|r[-_\s]*1)\b', s):
+        if re.search(r'\b(round\s*1|r\s*1)\b', s):
             return "R1"
-        if re.search(r'\b(round[-_\s]*2|r[-_\s]*2)\b', s):
-            return "R2"
-        if re.search(r'\b(round[-_\s]*3|r[-_\s]*3)\b', s):
+        # COMEDK Round 2 is strictly the KKR/Article 371J regional quota special allotment phase
+        if re.search(r'\b(round\s*2|r\s*2)\b', s) or "kkr special" in s or "kkr_special" in s or "r2 kkr" in s:
+            return "KKR_SPECIAL"
+        if re.search(r'\b(round\s*3|r\s*3)\b', s):
             return "R3"
-        if re.search(r'\b(round[-_\s]*4|r[-_\s]*4)\b', s) or "after all rounds" in s or "all rounds" in s:
+        if re.search(r'\b(round\s*4|r\s*4)\b', s) or "after all rounds" in s or "all rounds" in s:
             return "R4"
         return None
 

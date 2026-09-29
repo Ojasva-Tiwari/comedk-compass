@@ -71,8 +71,8 @@ class OfficialSourceDiscovery:
             return "MOCK"
         elif "round 1" in s or "round-1" in s or "round_1" in s:
             return "R1"
-        elif "round 2" in s or "round-2" in s or "round_2" in s:
-            return "R2"
+        elif "round 2" in s or "round-2" in s or "round_2" in s or "kkr" in s:
+            return "KKR_SPECIAL"
         elif "round 3" in s or "round-3" in s or "round_3" in s:
             return "R3"
         elif "round 4" in s or "round-4" in s or "round_4" in s:

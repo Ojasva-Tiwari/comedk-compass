@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import List, Dict, Any, Tuple, Optional, Set
 from uuid import UUID
 from backend.app.config import settings
@@ -30,8 +31,20 @@ class DataValidator:
     DEFAULT_COMPLETENESS_THRESHOLDS: Dict[Any, int] = {
         ("CUTOFF_PDF", "ENGINEERING"): 50,
         ("CUTOFF_PDF", "ARCHITECTURE"): 4,
+        ("VACANT_SEATS_PDF", "ENGINEERING"): 50,
+        ("VACANT_SEATS_PDF", "ARCHITECTURE"): 4,
+        ("SEAT_MATRIX_PDF", "ENGINEERING"): 50,
+        ("SEAT_MATRIX_PDF", "ARCHITECTURE"): 4,
+        ("FEE_STRUCTURE_PDF", "ENGINEERING"): 50,
+        ("FEE_STRUCTURE_PDF", "ARCHITECTURE"): 4,
         "ENGINEERING_CUTOFF": 50,
         "ARCHITECTURE_CUTOFF": 4,
+        "ENGINEERING_VACANT_SEATS": 50,
+        "ARCHITECTURE_VACANT_SEATS": 4,
+        "ENGINEERING_SEAT_MATRIX": 50,
+        "ARCHITECTURE_SEAT_MATRIX": 4,
+        "ENGINEERING_FEE_STRUCTURE": 50,
+        "ARCHITECTURE_FEE_STRUCTURE": 4,
     }
 
     def __init__(
@@ -113,8 +126,8 @@ class DataValidator:
                 ))
                 continue
 
-            # 3. Round validity check
-            valid_rounds = {"R1", "R2", "R3", "R4", "MOCK"}
+            # 3. Round validity check: COMEDK general pathway is R1 -> R3 -> R4, with KKR_SPECIAL for Article 371J
+            valid_rounds = {"R1", "R3", "R4", "MOCK", "KKR_SPECIAL"}
             if not r_code or r_code not in valid_rounds:
                 errors.append(ValidationErrorItem(
                     entity_type="CUTOFF",
@@ -202,6 +215,325 @@ class DataValidator:
 
         return valid_records, errors, anomalies
 
+    def validate_seat_records(
+        self,
+        records: List[Dict[str, Any]],
+        academic_year: int
+    ) -> Tuple[List[Dict[str, Any]], List[ValidationErrorItem], List[ValidationErrorItem]]:
+        """
+        Validates a batch of raw seat/vacancy records.
+        Returns: (valid_records, validation_errors, anomalies)
+        """
+        valid_records: List[Dict[str, Any]] = []
+        errors: List[ValidationErrorItem] = []
+        anomalies: List[ValidationErrorItem] = []
+        seen_logical_keys: Set[Tuple] = set()
+
+        for idx, rec in enumerate(records):
+            c_code = rec.get("college_code")
+            b_code = rec.get("branch_code")
+            r_code = rec.get("counselling_round")
+            cat_code = rec.get("category_code")
+            tot_seats = rec.get("total_seats")
+            vac_seats = rec.get("vacant_seats")
+            gm_seats = rec.get("gm_seats")
+            kkr_seats = rec.get("kkr_seats")
+            year = rec.get("academic_year", academic_year)
+            row_id = rec.get("row_identifier", f"seat_rec_{idx}")
+
+            # 1. Required fields
+            if not c_code:
+                errors.append(ValidationErrorItem(
+                    entity_type="SEAT",
+                    entity_identifier=row_id,
+                    error_code="MISSING_COLLEGE_CODE",
+                    message="Seat record is missing required college_code",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"record": rec}
+                ))
+                continue
+
+            if not b_code:
+                errors.append(ValidationErrorItem(
+                    entity_type="SEAT",
+                    entity_identifier=row_id,
+                    error_code="MISSING_BRANCH_CODE",
+                    message="Seat record is missing required branch_code",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"record": rec}
+                ))
+                continue
+
+            if tot_seats is None and vac_seats is None:
+                errors.append(ValidationErrorItem(
+                    entity_type="SEAT",
+                    entity_identifier=row_id,
+                    error_code="MISSING_SEAT_VALUES",
+                    message="Seat record must provide at least total_seats or vacant_seats",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"record": rec}
+                ))
+                continue
+
+            # 2. College code existence check
+            if c_code not in self.known_college_codes:
+                errors.append(ValidationErrorItem(
+                    entity_type="SEAT",
+                    entity_identifier=row_id,
+                    error_code="UNKNOWN_COLLEGE_CODE",
+                    message=f"College code '{c_code}' does not exist in registry",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"college_code": c_code}
+                ))
+                continue
+
+            # 3. Branch code existence check
+            if b_code not in self.known_branch_codes:
+                errors.append(ValidationErrorItem(
+                    entity_type="SEAT",
+                    entity_identifier=row_id,
+                    error_code="UNKNOWN_BRANCH_CODE",
+                    message=f"Branch code '{b_code}' does not exist in registry",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"branch_code": b_code}
+                ))
+                continue
+
+            # 4. Numeric seat values & non-negative values
+            has_numeric_err = False
+            for val_name, val in [("total_seats", tot_seats), ("vacant_seats", vac_seats), ("gm_seats", gm_seats), ("kkr_seats", kkr_seats)]:
+                if val is not None:
+                    if not isinstance(val, int) or val < 0:
+                        errors.append(ValidationErrorItem(
+                            entity_type="SEAT",
+                            entity_identifier=row_id,
+                            error_code=f"INVALID_{val_name.upper()}",
+                            message=f"{val_name} must be a non-negative integer, got: {val}",
+                            severity=ValidationSeverity.ERROR.value,
+                            context_data={"field": val_name, "value": val}
+                        ))
+                        has_numeric_err = True
+            if has_numeric_err:
+                continue
+
+            # 5. Logical consistency
+            # If both total_seats and vacant_seats are present: vacant_seats <= total_seats
+            if tot_seats is not None and vac_seats is not None:
+                if vac_seats > tot_seats:
+                    errors.append(ValidationErrorItem(
+                        entity_type="SEAT",
+                        entity_identifier=row_id,
+                        error_code="VACANCY_EXCEEDS_TOTAL_SEATS",
+                        message=f"Vacant seats ({vac_seats}) exceeds total seats ({tot_seats})",
+                        severity=ValidationSeverity.ERROR.value,
+                        context_data={"total_seats": tot_seats, "vacant_seats": vac_seats}
+                    ))
+                    continue
+
+            if gm_seats is not None and kkr_seats is not None and tot_seats is not None:
+                if (gm_seats + kkr_seats) > tot_seats:
+                    errors.append(ValidationErrorItem(
+                        entity_type="SEAT",
+                        entity_identifier=row_id,
+                        error_code="SEAT_SUM_EXCEEDS_TOTAL",
+                        message=f"Sum of GM ({gm_seats}) and KKR ({kkr_seats}) seats exceeds total seats ({tot_seats})",
+                        severity=ValidationSeverity.ERROR.value,
+                        context_data={"gm_seats": gm_seats, "kkr_seats": kkr_seats, "total_seats": tot_seats}
+                    ))
+                    continue
+
+            if gm_seats is not None and kkr_seats is not None and vac_seats is not None:
+                if (gm_seats + kkr_seats) > vac_seats:
+                    errors.append(ValidationErrorItem(
+                        entity_type="SEAT",
+                        entity_identifier=row_id,
+                        error_code="SEAT_SUM_EXCEEDS_VACANCY",
+                        message=f"Sum of GM ({gm_seats}) and KKR ({kkr_seats}) vacant seats exceeds total vacant seats ({vac_seats})",
+                        severity=ValidationSeverity.ERROR.value,
+                        context_data={"gm_seats": gm_seats, "kkr_seats": kkr_seats, "vacant_seats": vac_seats}
+                    ))
+                    continue
+
+            # 6. Duplicate logical record check
+            logical_key = (c_code, b_code, r_code, cat_code, year)
+            if logical_key in seen_logical_keys:
+                errors.append(ValidationErrorItem(
+                    entity_type="SEAT",
+                    entity_identifier=row_id,
+                    error_code="DUPLICATE_LOGICAL_RECORD",
+                    message=f"Duplicate seat record in same batch for key {logical_key}",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"logical_key": str(logical_key)}
+                ))
+                continue
+            seen_logical_keys.add(logical_key)
+
+            rec["status"] = RecordStatus.PUBLISHED.value
+            valid_records.append(rec)
+
+        return valid_records, errors, anomalies
+
+    def validate_fee_records(
+        self,
+        records: List[Dict[str, Any]],
+        academic_year: int
+    ) -> Tuple[List[Dict[str, Any]], List[ValidationErrorItem], List[ValidationErrorItem]]:
+        """
+        Validates a batch of raw fee records.
+        Returns: (valid_records, validation_errors, anomalies)
+        """
+        valid_records: List[Dict[str, Any]] = []
+        errors: List[ValidationErrorItem] = []
+        anomalies: List[ValidationErrorItem] = []
+        seen_logical_keys: Set[Tuple] = set()
+
+        for idx, rec in enumerate(records):
+            c_code = rec.get("college_code")
+            b_code = rec.get("branch_code")
+            tot_fee = rec.get("total_fee")
+            tuit_fee = rec.get("tuition_fee")
+            oth_fee = rec.get("other_fee")
+            year = rec.get("academic_year", academic_year)
+            row_id = rec.get("row_identifier", f"fee_rec_{idx}")
+
+            # 1. Required fields
+            if not c_code:
+                errors.append(ValidationErrorItem(
+                    entity_type="FEE",
+                    entity_identifier=row_id,
+                    error_code="MISSING_COLLEGE_CODE",
+                    message="Fee record is missing required college_code",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"record": rec}
+                ))
+                continue
+
+            if tot_fee is None:
+                errors.append(ValidationErrorItem(
+                    entity_type="FEE",
+                    entity_identifier=row_id,
+                    error_code="MISSING_TOTAL_FEE",
+                    message="Fee record is missing required total_fee",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"record": rec}
+                ))
+                continue
+
+            # 2. College code existence check
+            if c_code not in self.known_college_codes:
+                errors.append(ValidationErrorItem(
+                    entity_type="FEE",
+                    entity_identifier=row_id,
+                    error_code="UNKNOWN_COLLEGE_CODE",
+                    message=f"College code '{c_code}' does not exist in registry",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"college_code": c_code}
+                ))
+                continue
+
+            # 3. Branch code existence check (if branch is provided)
+            if b_code and b_code not in self.known_branch_codes:
+                errors.append(ValidationErrorItem(
+                    entity_type="FEE",
+                    entity_identifier=row_id,
+                    error_code="UNKNOWN_BRANCH_CODE",
+                    message=f"Branch code '{b_code}' does not exist in registry",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"branch_code": b_code}
+                ))
+                continue
+
+            # 4. Numeric fee values & non-negative values
+            has_fee_err = False
+            for val_name, val in [("total_fee", tot_fee), ("tuition_fee", tuit_fee), ("other_fee", oth_fee)]:
+                if val is not None:
+                    try:
+                        num_val = Decimal(str(val))
+                        if num_val < Decimal("0"):
+                            errors.append(ValidationErrorItem(
+                                entity_type="FEE",
+                                entity_identifier=row_id,
+                                error_code=f"INVALID_{val_name.upper()}",
+                                message=f"{val_name} must be non-negative, got: {val}",
+                                severity=ValidationSeverity.ERROR.value,
+                                context_data={"field": val_name, "value": str(val)}
+                            ))
+                            has_fee_err = True
+                    except Exception:
+                        errors.append(ValidationErrorItem(
+                            entity_type="FEE",
+                            entity_identifier=row_id,
+                            error_code=f"NON_NUMERIC_{val_name.upper()}",
+                            message=f"{val_name} must be a valid numeric amount, got: {val}",
+                            severity=ValidationSeverity.ERROR.value,
+                            context_data={"field": val_name, "value": str(val)}
+                        ))
+                        has_fee_err = True
+
+            if has_fee_err:
+                continue
+
+            dec_tot = Decimal(str(tot_fee))
+            dec_tuit = Decimal(str(tuit_fee)) if tuit_fee is not None else None
+            dec_oth = Decimal(str(oth_fee)) if oth_fee is not None else None
+
+            # 5. Logical consistency
+            # Check individual components do not exceed total
+            if dec_tuit is not None and dec_tuit > dec_tot:
+                errors.append(ValidationErrorItem(
+                    entity_type="FEE",
+                    entity_identifier=row_id,
+                    error_code="TUITION_EXCEEDS_TOTAL_FEE",
+                    message=f"Tuition fee ({dec_tuit}) exceeds total fee ({dec_tot})",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"tuition_fee": str(dec_tuit), "total_fee": str(dec_tot)}
+                ))
+                continue
+
+            if dec_oth is not None and dec_oth > dec_tot:
+                errors.append(ValidationErrorItem(
+                    entity_type="FEE",
+                    entity_identifier=row_id,
+                    error_code="OTHER_FEE_EXCEEDS_TOTAL_FEE",
+                    message=f"Other fee ({dec_oth}) exceeds total fee ({dec_tot})",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"other_fee": str(dec_oth), "total_fee": str(dec_tot)}
+                ))
+                continue
+
+            # If both components are present, sum must match total fee (allowing rounding up to 100)
+            if dec_tuit is not None and dec_oth is not None:
+                comp_sum = dec_tuit + dec_oth
+                if abs(comp_sum - dec_tot) > Decimal("100"):
+                    errors.append(ValidationErrorItem(
+                        entity_type="FEE",
+                        entity_identifier=row_id,
+                        error_code="FEE_COMPONENTS_MISMATCH",
+                        message=f"Sum of tuition ({dec_tuit}) and other fee ({dec_oth}) = {comp_sum} does not match total fee ({dec_tot})",
+                        severity=ValidationSeverity.ERROR.value,
+                        context_data={"tuition_fee": str(dec_tuit), "other_fee": str(dec_oth), "total_fee": str(dec_tot)}
+                    ))
+                    continue
+
+            # 6. Duplicate logical records check
+            logical_key = (c_code, b_code, year)
+            if logical_key in seen_logical_keys:
+                errors.append(ValidationErrorItem(
+                    entity_type="FEE",
+                    entity_identifier=row_id,
+                    error_code="DUPLICATE_LOGICAL_RECORD",
+                    message=f"Duplicate fee record in same batch for key {logical_key}",
+                    severity=ValidationSeverity.ERROR.value,
+                    context_data={"logical_key": str(logical_key)}
+                ))
+                continue
+            seen_logical_keys.add(logical_key)
+
+            rec["status"] = RecordStatus.PUBLISHED.value
+            valid_records.append(rec)
+
+        return valid_records, errors, anomalies
+
     def validate_batch_completeness(
         self,
         doc_type: str,
@@ -212,8 +544,7 @@ class DataValidator:
     ) -> List[ValidationErrorItem]:
         """
         Enforces FAIL CLOSED principle for truncated, suspicious, or unknown parses.
-        Prevents an incomplete parse (e.g., 37 engineering records when 1,200 expected,
-        or 2 architecture records when 4 expected) from superseding good data.
+        Prevents an incomplete parse from superseding good data.
 
         Configurable by document type and program type (Engineering vs Architecture).
         Unknown document types automatically fail closed and are routed to review.
@@ -285,6 +616,66 @@ class DataValidator:
                         f"{ptype} cutoff parse yielded only {extracted_count} records "
                         f"(minimum expected: {resolved_min})"
                     ),
+                    severity=ValidationSeverity.CRITICAL.value,
+                    context_data={"extracted": extracted_count, "minimum": resolved_min, "program_type": ptype}
+                ))
+
+        # 3. Vacancy PDF Completeness Validation
+        elif doc_type == DocumentType.VACANT_SEATS_PDF.value:
+            ptype = (program_type or ProgramType.ENGINEERING.value).upper()
+            resolved_min = (
+                minimum_threshold
+                if minimum_threshold is not None
+                else self.get_completeness_threshold(doc_type, ptype)
+            )
+
+            if extracted_count <= 0:
+                errors.append(ValidationErrorItem(
+                    entity_type="DOCUMENT",
+                    entity_identifier=doc_type,
+                    error_code="SUSPICIOUS_LOW_COUNT",
+                    message=f"Parsed 0 vacancy records for {ptype}; document is empty or unparseable.",
+                    severity=ValidationSeverity.CRITICAL.value,
+                    context_data={"extracted": extracted_count, "minimum": resolved_min, "program_type": ptype}
+                ))
+                return errors
+
+            if extracted_count < resolved_min:
+                errors.append(ValidationErrorItem(
+                    entity_type="DOCUMENT",
+                    entity_identifier=doc_type,
+                    error_code="SUSPICIOUS_LOW_COUNT",
+                    message=f"{ptype} vacancy parse yielded only {extracted_count} records (minimum expected: {resolved_min})",
+                    severity=ValidationSeverity.CRITICAL.value,
+                    context_data={"extracted": extracted_count, "minimum": resolved_min, "program_type": ptype}
+                ))
+
+        # 4. Seat Matrix & Fee Structure PDF Completeness Validation
+        elif doc_type in (DocumentType.SEAT_MATRIX_PDF.value, DocumentType.FEE_STRUCTURE_PDF.value):
+            ptype = (program_type or ProgramType.ENGINEERING.value).upper()
+            resolved_min = (
+                minimum_threshold
+                if minimum_threshold is not None
+                else self.get_completeness_threshold(doc_type, ptype)
+            )
+
+            if extracted_count <= 0:
+                errors.append(ValidationErrorItem(
+                    entity_type="DOCUMENT",
+                    entity_identifier=doc_type,
+                    error_code="SUSPICIOUS_LOW_COUNT",
+                    message=f"Parsed 0 records for {ptype} {doc_type}; document is empty or unparseable.",
+                    severity=ValidationSeverity.CRITICAL.value,
+                    context_data={"extracted": extracted_count, "minimum": resolved_min, "program_type": ptype}
+                ))
+                return errors
+
+            if extracted_count < resolved_min:
+                errors.append(ValidationErrorItem(
+                    entity_type="DOCUMENT",
+                    entity_identifier=doc_type,
+                    error_code="SUSPICIOUS_LOW_COUNT",
+                    message=f"{ptype} {doc_type} parse yielded only {extracted_count} records (minimum expected: {resolved_min})",
                     severity=ValidationSeverity.CRITICAL.value,
                     context_data={"extracted": extracted_count, "minimum": resolved_min, "program_type": ptype}
                 ))

@@ -74,17 +74,17 @@ class IngestionPipeline:
                 self.db.flush()
             cat_map[code] = cat
 
-        # Seed counselling rounds
+        # Seed counselling rounds: COMEDK general pathway is R1 -> R3 -> R4, with KKR_SPECIAL for Article 371J
         standard_rounds = [
-            ("MOCK", "Mock Round", 0),
-            ("R1", "Round 1", 1),
-            ("R2", "Round 2", 2),
-            ("R3", "Round 3", 3),
-            ("R4", "Round 4", 4),
+            ("MOCK", "Mock Round", 0, True),
+            ("R1", "Round 1", 1, True),
+            ("KKR_SPECIAL", "Round 2 KKR Special Allotment", 2, False),
+            ("R3", "Round 3", 3, True),
+            ("R4", "Round 4", 4, True),
         ]
         round_map: Dict[str, CounsellingRound] = {}
         for yr in (self.academic_year, 2025):
-            for code, name, num in standard_rounds:
+            for code, name, num, is_gen in standard_rounds:
                 rnd = self.db.execute(
                     select(CounsellingRound).where(
                         CounsellingRound.academic_year == yr,
@@ -96,10 +96,15 @@ class IngestionPipeline:
                         code=code,
                         name=name,
                         academic_year=yr,
-                        round_number=num
+                        round_number=num,
+                        is_general_round=is_gen
                     )
                     self.db.add(rnd)
                     self.db.flush()
+                else:
+                    if rnd.is_general_round != is_gen:
+                        rnd.is_general_round = is_gen
+                        self.db.flush()
                 if yr == self.academic_year:
                     round_map[code] = rnd
 
@@ -160,10 +165,10 @@ class IngestionPipeline:
             # Prioritize HTML college sources first
             html_sources = [s for s in discovered_sources if "HTML" in s.document_type]
             cutoff_sources = [s for s in discovered_sources if s.document_type == DocumentType.CUTOFF_PDF.value]
-            seat_fee_sources = [s for s in discovered_sources if s.document_type in (DocumentType.SEAT_MATRIX_PDF.value, DocumentType.FEE_STRUCTURE_PDF.value)]
+            seat_fee_sources = [s for s in discovered_sources if s.document_type in (DocumentType.SEAT_MATRIX_PDF.value, DocumentType.VACANT_SEATS_PDF.value, DocumentType.FEE_STRUCTURE_PDF.value)]
 
-            # Order cutoffs: 2026 Engineering cutoffs sorted by round: MOCK -> R1 -> R2 -> R3 -> R4, then Architecture
-            round_order = {"MOCK": 0, "R1": 1, "R2": 2, "R3": 3, "R4": 4}
+            # Order cutoffs: COMEDK general pathway is MOCK -> R1 -> R3 -> R4, with specialized KKR_SPECIAL
+            round_order = {"MOCK": 0, "R1": 1, "R3": 3, "R4": 4, "KKR_SPECIAL": 90}
             eng_cutoffs = [
                 s for s in cutoff_sources
                 if "architecture" not in s.title.lower() and "architecture" not in s.url.lower() and s.academic_year == self.academic_year
@@ -287,6 +292,9 @@ class IngestionPipeline:
                         if classified_round and not disc.counselling_round:
                             disc.counselling_round = classified_round
 
+                    if not disc.counselling_round:
+                        disc.counselling_round = DocumentClassifier.extract_counselling_round(f"{disc.title} {disc.url}")
+
                     # Upsert SourceVersion record
                     sv = self.db.execute(
                         select(SourceVersion).where(
@@ -350,13 +358,43 @@ class IngestionPipeline:
 
                     elif detected_type in (DocumentType.SEAT_MATRIX_PDF.value, DocumentType.FEE_STRUCTURE_PDF.value, DocumentType.VACANT_SEATS_PDF.value):
                         parser = self.parser_registry.get_parser(detected_type)
-                        parse_res = parser.parse(content, {"academic_year": disc.academic_year})
+                        parse_res = parser.parse(content, {
+                            "academic_year": disc.academic_year,
+                            "counselling_round": disc.counselling_round or sv.counselling_round,
+                            "document_type": detected_type,
+                            "source_title": disc.title,
+                            "program_type": DocumentClassifier.extract_program_type(f"{disc.title} {disc.url}")
+                        })
                         stats["documents_parsed"] += 1
+
+                        if not parse_res.is_usable_text:
+                            stats["documents_needs_review"] += 1
+                            sv.processing_status = RecordStatus.NEEDS_REVIEW.value
+                            self.review_queue.add_review_item(
+                                source_id=source_db.id,
+                                source_version_id=sv.id,
+                                document_type=detected_type,
+                                document_url=disc.url,
+                                failure_reason=FailureReason.SCANNED_PDF.value,
+                                ingestion_run_id=run_record.id,
+                                parser_version=settings.PARSER_VERSION,
+                                review_notes="PDF has non-extractable text (scanned or image-based); manual review or OCR required."
+                            )
+                            self.db.commit()
+                            continue
+
                         if parse_res.discovered_branches:
                             self._ingest_branches(parse_res.discovered_branches, stats)
                         if parse_res.discovered_colleges:
                             self._ingest_colleges(parse_res.discovered_colleges, sv.id, stats)
-                        self._ingest_seat_and_fee_records(parse_res, sv.id, stats)
+
+                        doc_report = self._ingest_seat_and_fee_records(
+                            parse_res=parse_res,
+                            sv=sv,
+                            run_id=run_record.id,
+                            stats=stats
+                        )
+                        stats["parsing_reports"].append(doc_report)
 
                     elif detected_type == DocumentType.CUTOFF_PDF.value:
                         parser = self.parser_registry.get_parser(detected_type)
@@ -548,64 +586,314 @@ class IngestionPipeline:
                 alias_b.canonical_branch_id = canon_b.id
         self.db.flush()
 
-    def _ingest_seat_and_fee_records(self, parse_res, source_version_id: uuid.UUID, stats: Dict[str, int]):
-        seat_recs = parse_res.metadata.get("seat_records", [])
-        fee_recs = parse_res.metadata.get("fee_records", [])
+    def _ingest_seat_and_fee_records(
+        self,
+        parse_res,
+        sv: SourceVersion,
+        run_id: uuid.UUID,
+        stats: Dict[str, int]
+    ):
+        if stats is None:
+            stats = {}
 
-        # Fetch college & branch maps
+        raw_seat_recs = parse_res.metadata.get("seat_records", [])
+        raw_fee_recs = parse_res.metadata.get("fee_records", [])
+        total_extracted = len(raw_seat_recs) + len(raw_fee_recs)
+        stats["records_parsed"] = stats.get("records_parsed", 0) + total_extracted
+
+        # 1. Zero-record or rejected parse failure
+        if total_extracted == 0 or parse_res.status == RecordStatus.REJECTED or not parse_res.is_usable_text:
+            stats["documents_needs_review"] = stats.get("documents_needs_review", 0) + 1
+            sv.processing_status = RecordStatus.NEEDS_REVIEW.value
+            fail_reason = (
+                FailureReason.SCANNED_PDF.value
+                if not parse_res.is_usable_text
+                else (FailureReason.PARSE_MALFORMED.value if parse_res.errors else FailureReason.SUSPICIOUS_LOW_COUNT.value)
+            )
+            self._record_error(
+                run_id=run_id,
+                source_version_id=sv.id,
+                entity_type="DOCUMENT",
+                entity_id=sv.source_url,
+                code="EMPTY_OR_UNPARSED_DOCUMENT",
+                msg=f"0 seat/fee records extracted from {sv.document_type} (errors: {parse_res.errors})",
+                severity=ValidationSeverity.CRITICAL.value
+            )
+            self.review_queue.add_review_item(
+                source_id=sv.source_id,
+                source_version_id=sv.id,
+                ingestion_run_id=run_id,
+                document_type=sv.document_type,
+                document_url=sv.source_url,
+                failure_reason=fail_reason,
+                validation_errors=[{"error": e} for e in parse_res.errors],
+                parser_version=sv.parser_version,
+                review_notes=f"Parsing produced 0 records or encountered fatal errors: {parse_res.errors}"
+            )
+            self.db.commit()
+            return {
+                "source_title": sv.source_title,
+                "academic_year": sv.academic_year,
+                "status": "NEEDS_REVIEW",
+                "failure_reason": fail_reason,
+                "candidate_records": total_extracted,
+                "validated_records": 0,
+                "published_records": 0
+            }
+
+        # 2. Check for malformed row errors from parser
+        if parse_res.errors:
+            stats["documents_needs_review"] = stats.get("documents_needs_review", 0) + 1
+            sv.processing_status = RecordStatus.NEEDS_REVIEW.value
+            for pe in parse_res.errors:
+                self._record_error(
+                    run_id=run_id,
+                    source_version_id=sv.id,
+                    entity_type="PARSER",
+                    entity_id=pe.get("row_identifier", sv.source_url),
+                    code="MALFORMED_ROW",
+                    msg=str(pe.get("error", "Malformed row")),
+                    severity=ValidationSeverity.ERROR.value,
+                    ctx=pe
+                )
+            self.review_queue.add_review_item(
+                source_id=sv.source_id,
+                source_version_id=sv.id,
+                ingestion_run_id=run_id,
+                document_type=sv.document_type,
+                document_url=sv.source_url,
+                failure_reason=FailureReason.MALFORMED_ROW.value,
+                validation_errors=parse_res.errors,
+                parser_version=sv.parser_version,
+                review_notes=f"Document contains malformed rows: {parse_res.errors[:3]}"
+            )
+            self.db.commit()
+            return {
+                "source_title": sv.source_title,
+                "academic_year": sv.academic_year,
+                "status": "NEEDS_REVIEW",
+                "failure_reason": FailureReason.MALFORMED_ROW.value,
+                "candidate_records": total_extracted,
+                "validated_records": 0,
+                "published_records": 0
+            }
+
+        # 3. Reference mappings
         colleges = {c.code: c.id for c in self.db.execute(select(College)).scalars().all()}
         branches = {b.code: b.id for b in self.db.execute(select(Branch)).scalars().all()}
+        categories = {c.code: c.id for c in self.db.execute(select(Category)).scalars().all()}
+        round_map_db = {
+            r.code: r.id for r in self.db.execute(
+                select(CounsellingRound).where(CounsellingRound.academic_year == sv.academic_year)
+            ).scalars().all()
+        }
 
-        for s in seat_recs:
+        validator = DataValidator(
+            known_college_codes=set(colleges.keys()),
+            known_branch_codes=set(branches.keys()),
+            known_categories=set(categories.keys()),
+        )
+
+        valid_seats, seat_errors, seat_anomalies = validator.validate_seat_records(
+            records=raw_seat_recs,
+            academic_year=sv.academic_year
+        )
+        valid_fees, fee_errors, fee_anomalies = validator.validate_fee_records(
+            records=raw_fee_recs,
+            academic_year=sv.academic_year
+        )
+
+        total_validation_errors = seat_errors + fee_errors
+        total_anomalies = seat_anomalies + fee_anomalies
+
+        stats["records_validated"] = stats.get("records_validated", 0) + len(valid_seats) + len(valid_fees)
+        stats["records_rejected"] = stats.get("records_rejected", 0) + len(total_validation_errors)
+        stats["validation_errors"] = stats.get("validation_errors", 0) + len(total_validation_errors)
+        stats["anomalies"] = stats.get("anomalies", 0) + len(total_anomalies)
+
+        for err in total_validation_errors:
+            self._record_error(
+                run_id=run_id,
+                source_version_id=sv.id,
+                entity_type=err.entity_type,
+                entity_id=err.entity_identifier,
+                code=err.error_code,
+                msg=err.message,
+                severity=err.severity,
+                ctx=err.context_data
+            )
+
+        for anom in total_anomalies:
+            self._record_error(
+                run_id=run_id,
+                source_version_id=sv.id,
+                entity_type=anom.entity_type,
+                entity_id=anom.entity_identifier,
+                code=anom.error_code,
+                msg=anom.message,
+                severity=anom.severity,
+                ctx=anom.context_data
+            )
+
+        # 4. Fail-closed on validation failures
+        if total_validation_errors:
+            stats["records_needs_review"] = stats.get("records_needs_review", 0) + len(valid_seats) + len(valid_fees)
+            stats["documents_needs_review"] = stats.get("documents_needs_review", 0) + 1
+            sv.processing_status = RecordStatus.NEEDS_REVIEW.value
+            self.review_queue.add_review_item(
+                source_id=sv.source_id,
+                source_version_id=sv.id,
+                ingestion_run_id=run_id,
+                document_type=sv.document_type,
+                document_url=sv.source_url,
+                failure_reason=FailureReason.VALIDATION_FAILED.value,
+                validation_errors=[{"code": e.error_code, "message": e.message, "context": e.context_data} for e in total_validation_errors],
+                parser_version=sv.parser_version,
+                review_notes=f"Record validation failed with {len(total_validation_errors)} error(s): {total_validation_errors[0].message}"
+            )
+            self.db.commit()
+            return {
+                "source_title": sv.source_title,
+                "academic_year": sv.academic_year,
+                "status": "NEEDS_REVIEW",
+                "failure_reason": FailureReason.VALIDATION_FAILED.value,
+                "candidate_records": total_extracted,
+                "validated_records": len(valid_seats) + len(valid_fees),
+                "published_records": 0
+            }
+
+        # 5. Batch Completeness Validation
+        doc_program_type = DocumentClassifier.extract_program_type(f"{sv.source_title} {sv.source_url}")
+        all_branches = [r.get("branch_code") for r in valid_seats] + [r.get("branch_code") for r in valid_fees if r.get("branch_code")]
+        if all_branches and all(b in ("AT", "AR") for b in all_branches):
+            doc_program_type = ProgramType.ARCHITECTURE.value
+
+        count_to_check = len(valid_seats) if sv.document_type in (DocumentType.SEAT_MATRIX_PDF.value, DocumentType.VACANT_SEATS_PDF.value) else (len(valid_fees) if sv.document_type == DocumentType.FEE_STRUCTURE_PDF.value else len(valid_seats) + len(valid_fees))
+
+        completeness_errors = validator.validate_batch_completeness(
+            doc_type=sv.document_type,
+            extracted_count=count_to_check,
+            program_type=doc_program_type
+        )
+
+        if completeness_errors:
+            stats["records_needs_review"] = stats.get("records_needs_review", 0) + len(valid_seats) + len(valid_fees)
+            stats["documents_needs_review"] = stats.get("documents_needs_review", 0) + 1
+            sv.processing_status = RecordStatus.NEEDS_REVIEW.value
+            for err in completeness_errors:
+                self._record_error(
+                    run_id=run_id,
+                    source_version_id=sv.id,
+                    entity_type=err.entity_type,
+                    entity_id=err.entity_identifier,
+                    code=err.error_code,
+                    msg=err.message,
+                    severity=err.severity,
+                    ctx=err.context_data
+                )
+            self.review_queue.add_review_item(
+                source_id=sv.source_id,
+                source_version_id=sv.id,
+                ingestion_run_id=run_id,
+                document_type=sv.document_type,
+                document_url=sv.source_url,
+                failure_reason=FailureReason.SUSPICIOUS_LOW_COUNT.value,
+                validation_errors=[{"code": e.error_code, "message": e.message, "context": e.context_data} for e in completeness_errors],
+                parser_version=sv.parser_version,
+                review_notes=f"Completeness validation failed: {completeness_errors[0].message}"
+            )
+            self.db.commit()
+            return {
+                "source_title": sv.source_title,
+                "academic_year": sv.academic_year,
+                "status": "NEEDS_REVIEW",
+                "failure_reason": FailureReason.SUSPICIOUS_LOW_COUNT.value,
+                "candidate_records": total_extracted,
+                "validated_records": len(valid_seats) + len(valid_fees),
+                "published_records": 0
+            }
+
+        # 6. Publishing valid records with strict idempotency
+        published_seats = 0
+        published_fees = 0
+
+        for s in valid_seats:
             c_id = colleges.get(s["college_code"])
             b_id = branches.get(s["branch_code"])
+            cat_id = categories.get(s.get("category_code")) if s.get("category_code") else None
+            rnd_code = s.get("counselling_round") or sv.counselling_round
+            rnd_id = round_map_db.get(rnd_code) if rnd_code else None
+
             if c_id and b_id:
                 existing_seat = self.db.execute(
                     select(SeatRecord).where(
-                        SeatRecord.source_version_id == source_version_id,
+                        SeatRecord.source_version_id == sv.id,
                         SeatRecord.college_id == c_id,
                         SeatRecord.branch_id == b_id,
+                        SeatRecord.category_id == cat_id,
+                        SeatRecord.round_id == rnd_id,
                         SeatRecord.academic_year == s["academic_year"]
                     )
                 ).scalars().first()
+
                 if not existing_seat:
                     sr = SeatRecord(
-                        source_version_id=source_version_id,
+                        source_version_id=sv.id,
                         college_id=c_id,
                         branch_id=b_id,
+                        category_id=cat_id,
+                        round_id=rnd_id,
                         academic_year=s["academic_year"],
                         total_seats=s.get("total_seats"),
                         vacant_seats=s.get("vacant_seats"),
                         status=RecordStatus.PUBLISHED.value
                     )
                     self.db.add(sr)
-                    stats["records_published"] += 1
+                    published_seats += 1
 
-        for f in fee_recs:
+        for f in valid_fees:
             c_id = colleges.get(f["college_code"])
-            b_id = branches.get(f["branch_code"])
+            b_id = branches.get(f["branch_code"]) if f.get("branch_code") else None
             if c_id and f.get("total_fee") is not None:
                 existing_fee = self.db.execute(
                     select(FeeRecord).where(
-                        FeeRecord.source_version_id == source_version_id,
+                        FeeRecord.source_version_id == sv.id,
                         FeeRecord.college_id == c_id,
                         FeeRecord.branch_id == b_id,
                         FeeRecord.academic_year == f["academic_year"]
                     )
                 ).scalars().first()
+
                 if not existing_fee:
                     fr = FeeRecord(
-                        source_version_id=source_version_id,
+                        source_version_id=sv.id,
                         college_id=c_id,
                         branch_id=b_id,
                         academic_year=f["academic_year"],
                         total_fee=f["total_fee"],
                         tuition_fee=f.get("tuition_fee"),
                         other_fee=f.get("other_fee"),
+                        currency=f.get("currency", "INR"),
                         status=RecordStatus.PUBLISHED.value
                     )
                     self.db.add(fr)
-                    stats["records_published"] += 1
+                    published_fees += 1
+
+        sv.processing_status = RecordStatus.PUBLISHED.value
+        self.db.commit()
+
+        stats["records_published"] = stats.get("records_published", 0) + published_seats + published_fees
+
+        return {
+            "source_title": sv.source_title,
+            "academic_year": sv.academic_year,
+            "status": "PUBLISHED",
+            "candidate_records": total_extracted,
+            "validated_records": len(valid_seats) + len(valid_fees),
+            "published_seats": published_seats,
+            "published_fees": published_fees,
+            "published_records": published_seats + published_fees
+        }
 
     def _ingest_cutoff_records(
         self,
