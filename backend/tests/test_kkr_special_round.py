@@ -101,14 +101,15 @@ def test_kkr_special_excluded_from_general_counselling_progression(db, client):
         if gen_code in round_map:
             assert round_map[gen_code].is_general_round is True, f"{gen_code} must be marked as general round"
 
-    # Check that general counselling progression in DB is strictly R1 -> R3 -> R4
-    general_rounds = db.execute(
-        select(CounsellingRound.code)
-        .where(CounsellingRound.is_general_round.is_(True))
-        .order_by(CounsellingRound.round_number)
-    ).scalars().all()
-    assert "KKR_SPECIAL" not in general_rounds
-    assert [r for r in general_rounds if r.startswith("R")] == ["R1", "R3", "R4"]
+    # Check that general counselling progression in DB is strictly R1 -> R3 -> R4 for each academic year
+    for yr in [2026, 2025]:
+        general_rounds = db.execute(
+            select(CounsellingRound.code)
+            .where(CounsellingRound.is_general_round.is_(True), CounsellingRound.academic_year == yr)
+            .order_by(CounsellingRound.round_number)
+        ).scalars().all()
+        assert "KKR_SPECIAL" not in general_rounds
+        assert [r for r in general_rounds if r.startswith("R")] == ["R1", "R3", "R4"]
 
     kkr_round_ids = {str(r.id) for r in rounds if r.code == "KKR_SPECIAL"}
 

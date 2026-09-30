@@ -167,6 +167,18 @@ async def cmd_run(args):
     db = SessionLocal()
     try:
         pipeline = IngestionPipeline(db=db, academic_year=args.year)
+        if args.source_version:
+            sv_uuid = uuid.UUID(args.source_version)
+            print(f"Ingesting specific SourceVersion document: {sv_uuid}...")
+            report = pipeline.ingest_source_version(sv_uuid)
+            print("\n" + "=" * 60)
+            print("SOURCE VERSION INGESTION SUMMARY")
+            print("=" * 60)
+            for k, v in report.items():
+                print(f"  {k:<28}: {v}")
+            print("=" * 60)
+            return
+
         print(f"Starting Safe Acquisition & Ingestion Pipeline for Academic Year {args.year}...")
         stats = await pipeline.run(max_cutoff_docs=args.max_docs)
         print("\n" + "=" * 60)
@@ -223,6 +235,7 @@ def main():
     p_run = subparsers.add_parser("run", help="Run complete ingestion pipeline")
     p_run.add_argument("--year", type=int, default=2026, help="Academic year")
     p_run.add_argument("--max-docs", type=int, default=None, help="Max cutoff documents to process")
+    p_run.add_argument("--source-version", type=str, default=None, help="UUID of specific SourceVersion to ingest")
 
     args = parser.parse_args()
 

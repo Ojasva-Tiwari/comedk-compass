@@ -1,4 +1,6 @@
 import uuid
+import hashlib
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Set, Tuple
 from sqlalchemy.orm import Session
@@ -478,6 +480,124 @@ class IngestionPipeline:
             run_record.summary = {"fatal_error": str(e), **stats}
             self.db.commit()
             raise
+
+    def ingest_source_version(self, source_version_id: uuid.UUID) -> Dict[str, Any]:
+        """
+        Safely and idempotently ingests a single archived SourceVersion document.
+        Preserves provenance, validates all records, and publishes only valid data.
+        """
+        sv = self.db.execute(select(SourceVersion).where(SourceVersion.id == source_version_id)).scalar_one_or_none()
+        if not sv:
+            raise ValueError(f"SourceVersion with id {source_version_id} not found.")
+
+        # Ensure reference data exists
+        cat_map, round_map = self._seed_base_reference_data()
+
+        local_path = Path(sv.local_path)
+        if not local_path.is_absolute():
+            for base in (Path.cwd(), Path(__file__).resolve().parents[3], getattr(settings, "RAW_DATA_DIR", Path.cwd()).parent.parent.parent):
+                cand = base / local_path
+                if cand.exists():
+                    local_path = cand
+                    break
+
+        if not local_path.exists():
+            raise FileNotFoundError(f"Local file for SourceVersion {source_version_id} not found at {sv.local_path}")
+
+        with open(local_path, "rb") as f:
+            content = f.read()
+
+        content_hash = hashlib.sha256(content).hexdigest()
+        if content_hash != sv.content_hash:
+            raise ValueError(f"Content hash mismatch for {source_version_id}: expected {sv.content_hash}, got {content_hash}")
+
+        stats = {
+            "colleges_discovered": 0,
+            "colleges_inserted": 0,
+            "colleges_updated": 0,
+            "colleges_unchanged": 0,
+            "colleges_skipped": 0,
+            "branches_discovered": 0,
+            "branches_inserted": 0,
+            "branches_updated": 0,
+            "records_parsed": 0,
+            "records_validated": 0,
+            "records_published": 0,
+            "records_rejected": 0,
+            "records_needs_review": 0,
+            "validation_errors": 0,
+            "anomalies": 0,
+        }
+
+        parser = self.parser_registry.get_parser(sv.document_type)
+        if sv.document_type == DocumentType.CUTOFF_PDF.value:
+            parse_res = parser.parse(content, {
+                "academic_year": sv.academic_year,
+                "counselling_round": sv.counselling_round or "R4"
+            })
+            if not parse_res.is_usable_text:
+                sv.processing_status = RecordStatus.NEEDS_REVIEW.value
+                self.review_queue.add_review_item(
+                    source_id=sv.source_id,
+                    source_version_id=sv.id,
+                    document_type=sv.document_type,
+                    document_url=sv.source_url,
+                    failure_reason=FailureReason.SCANNED_PDF.value,
+                    ingestion_run_id=sv.ingestion_run_id,
+                    parser_version=settings.PARSER_VERSION,
+                    review_notes="PDF has non-extractable text; manual review or OCR required."
+                )
+                self.db.commit()
+                return {"status": "NEEDS_REVIEW", "failure_reason": FailureReason.SCANNED_PDF.value}
+
+            if parse_res.discovered_branches:
+                self._ingest_branches(parse_res.discovered_branches, stats)
+            if parse_res.discovered_colleges:
+                self._ingest_colleges(parse_res.discovered_colleges, sv.id, stats)
+
+            doc_report = self._ingest_cutoff_records(
+                parse_res=parse_res,
+                sv=sv,
+                cat_map=cat_map,
+                round_map=round_map,
+                run_id=sv.ingestion_run_id,
+                stats=stats
+            )
+            if sv.processing_status != RecordStatus.NEEDS_REVIEW.value:
+                sv.processing_status = RecordStatus.PUBLISHED.value
+            self.db.commit()
+            return doc_report
+
+        elif sv.document_type in (DocumentType.SEAT_MATRIX_PDF.value, DocumentType.VACANT_SEATS_PDF.value, DocumentType.FEE_STRUCTURE_PDF.value):
+            parse_res = parser.parse(content, {
+                "academic_year": sv.academic_year,
+                "counselling_round": sv.counselling_round,
+                "document_type": sv.document_type,
+                "source_title": sv.source_title,
+                "program_type": DocumentClassifier.extract_program_type(f"{sv.source_title} {sv.source_url}")
+            })
+            if not parse_res.is_usable_text:
+                sv.processing_status = RecordStatus.NEEDS_REVIEW.value
+                self.db.commit()
+                return {"status": "NEEDS_REVIEW"}
+
+            if parse_res.discovered_branches:
+                self._ingest_branches(parse_res.discovered_branches, stats)
+            if parse_res.discovered_colleges:
+                self._ingest_colleges(parse_res.discovered_colleges, sv.id, stats)
+
+            doc_report = self._ingest_seat_and_fee_records(
+                parse_res=parse_res,
+                sv=sv,
+                run_id=sv.ingestion_run_id,
+                stats=stats
+            )
+            if sv.processing_status != RecordStatus.NEEDS_REVIEW.value:
+                sv.processing_status = RecordStatus.PUBLISHED.value
+            self.db.commit()
+            return doc_report
+        else:
+            raise NotImplementedError(f"Direct ingestion for document type {sv.document_type} is not implemented.")
 
     def _extract_branches_from_counselling_portal(self, content: bytes) -> Dict[str, str]:
         branches = {}
@@ -1046,6 +1166,30 @@ class IngestionPipeline:
             if not rnd_id:
                 # Fallback to R1 if round code was missing
                 rnd_id = round_map_db.get("R1")
+
+            if not rnd_id:
+                # Dynamically lookup round for sv.academic_year
+                rnd = self.db.execute(
+                    select(CounsellingRound).where(
+                        CounsellingRound.academic_year == sv.academic_year,
+                        CounsellingRound.code == rec["round_code"]
+                    )
+                ).scalar_one_or_none()
+                if rnd:
+                    rnd_id = rnd.id
+                    round_map_db[rec["round_code"]] = rnd.id
+
+            if not rnd_id:
+                self._record_error(
+                    run_id=run_id,
+                    source_version_id=sv.id,
+                    entity_type="CUTOFF",
+                    entity_id=rec.get("row_identifier"),
+                    code="UNKNOWN_COUNSELLING_ROUND",
+                    msg=f"Could not map round '{rec.get('round_code')}' to an active counselling round for academic year {sv.academic_year}",
+                    severity=ValidationSeverity.ERROR.value
+                )
+                continue
 
             # Check if record already exists for THIS specific immutable source version
             existing_for_version = self.db.execute(
