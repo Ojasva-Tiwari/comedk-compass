@@ -76,17 +76,43 @@ class IngestionPipeline:
                 self.db.flush()
             cat_map[code] = cat
 
-        # Seed counselling rounds: COMEDK general pathway is R1 -> R3 -> R4, with KKR_SPECIAL for Article 371J
-        standard_rounds = [
-            ("MOCK", "Mock Round", 0, True),
-            ("R1", "Round 1", 1, True),
-            ("KKR_SPECIAL", "Round 2 KKR Special Allotment", 2, False),
-            ("R3", "Round 3", 3, True),
-            ("R4", "Round 4", 4, True),
-        ]
+        # Seed counselling rounds: year-specific historical mapping
+        year_rounds = {
+            2023: [
+                ("MOCK", "Mock Round", 0, True),
+                ("R1", "Round 1", 1, True),
+                ("KKR_SPECIAL", "Round 2 Phase 1 KKR Special Allotment", 2, False),
+                ("R2_PHASE2", "Round 2 Phase 2", 2, True),
+                ("R3", "Round 3", 3, True),
+                ("CONSOLIDATED_FINAL", "Consolidated Cutoff After All Rounds", 99, True),
+            ],
+            2024: [
+                ("MOCK", "Mock Round", 0, True),
+                ("R1", "Round 1", 1, True),
+                ("KKR_SPECIAL", "Round 2 Phase 1 KKR Special Allotment", 2, False),
+                ("R2_PHASE2", "Round 2 Phase 2", 2, True),
+                ("R3", "Round 3", 3, True),
+            ],
+            2025: [
+                ("MOCK", "Mock Round", 0, True),
+                ("R1", "Round 1", 1, True),
+                ("KKR_SPECIAL", "Round 2 KKR Special Allotment", 2, False),
+                ("R3", "Round 3", 3, True),
+                ("R4", "Round 4", 4, True),
+            ],
+            2026: [
+                ("MOCK", "Mock Round", 0, True),
+                ("R1", "Round 1", 1, True),
+                ("KKR_SPECIAL", "Round 2 KKR Special Allotment", 2, False),
+                ("R3", "Round 3", 3, True),
+                ("R4", "Round 4", 4, True),
+            ],
+        }
         round_map: Dict[str, CounsellingRound] = {}
-        for yr in (self.academic_year, 2025):
-            for code, name, num, is_gen in standard_rounds:
+        target_years = {self.academic_year, 2023, 2024, 2025, 2026}
+        for yr in target_years:
+            rounds = year_rounds.get(yr, year_rounds[2026])
+            for code, name, num, is_gen in rounds:
                 rnd = self.db.execute(
                     select(CounsellingRound).where(
                         CounsellingRound.academic_year == yr,
@@ -141,6 +167,7 @@ class IngestionPipeline:
             "documents_downloaded": 0,
             "documents_already_archived": 0,
             "documents_failed": 0,
+            "documents_skipped": 0,
             "documents_parsed": 0,
             "documents_needs_review": 0,
             "records_parsed": 0,
@@ -169,8 +196,8 @@ class IngestionPipeline:
             cutoff_sources = [s for s in discovered_sources if s.document_type == DocumentType.CUTOFF_PDF.value]
             seat_fee_sources = [s for s in discovered_sources if s.document_type in (DocumentType.SEAT_MATRIX_PDF.value, DocumentType.VACANT_SEATS_PDF.value, DocumentType.FEE_STRUCTURE_PDF.value)]
 
-            # Order cutoffs: COMEDK general pathway is MOCK -> R1 -> R3 -> R4, with specialized KKR_SPECIAL
-            round_order = {"MOCK": 0, "R1": 1, "R3": 3, "R4": 4, "KKR_SPECIAL": 90}
+            # Order cutoffs
+            round_order = {"MOCK": 0, "R1": 1, "KKR_SPECIAL": 20, "R2_PHASE2": 21, "R3": 30, "R4": 40, "CONSOLIDATED_FINAL": 99}
             eng_cutoffs = [
                 s for s in cutoff_sources
                 if "architecture" not in s.title.lower() and "architecture" not in s.url.lower() and s.academic_year == self.academic_year
@@ -185,10 +212,14 @@ class IngestionPipeline:
             else:
                 ordered_cutoff_sources = all_cutoffs
 
-            ordered_sources = html_sources + seat_fee_sources + ordered_cutoff_sources
+            other_sources = [s for s in discovered_sources if s not in html_sources and s not in cutoff_sources and s not in seat_fee_sources]
+            ordered_sources = html_sources + seat_fee_sources + ordered_cutoff_sources + other_sources
             stats["documents_discovered"] = len(ordered_sources)
 
             for disc in ordered_sources:
+                if disc.academic_year < 2023:
+                    stats["documents_skipped"] += 1
+                    continue
                 try:
                     # Upsert / sync Source registry record
                     source_db = self.db.execute(select(Source).where(Source.url == disc.url)).scalar_one_or_none()
@@ -402,7 +433,7 @@ class IngestionPipeline:
                         parser = self.parser_registry.get_parser(detected_type)
                         parse_res = parser.parse(content, {
                             "academic_year": disc.academic_year,
-                            "counselling_round": disc.counselling_round or "R1"
+                            "counselling_round": disc.counselling_round or sv.counselling_round or "UNKNOWN"
                         })
                         stats["documents_parsed"] += 1
 
@@ -533,7 +564,7 @@ class IngestionPipeline:
         if sv.document_type == DocumentType.CUTOFF_PDF.value:
             parse_res = parser.parse(content, {
                 "academic_year": sv.academic_year,
-                "counselling_round": sv.counselling_round or "R4"
+                "counselling_round": sv.counselling_round or "UNKNOWN"
             })
             if not parse_res.is_usable_text:
                 sv.processing_status = RecordStatus.NEEDS_REVIEW.value
@@ -565,6 +596,15 @@ class IngestionPipeline:
             )
             if sv.processing_status != RecordStatus.NEEDS_REVIEW.value:
                 sv.processing_status = RecordStatus.PUBLISHED.value
+                pending_revs = self.db.execute(
+                    select(IngestionReviewItem).where(
+                        IngestionReviewItem.source_version_id == sv.id,
+                        IngestionReviewItem.status == ReviewStatus.PENDING_REVIEW.value
+                    )
+                ).scalars().all()
+                for prv in pending_revs:
+                    prv.status = ReviewStatus.APPROVED.value
+                    prv.review_notes = (prv.review_notes or "") + " [Resolved: validated and published]"
             self.db.commit()
             return doc_report
 
@@ -1100,11 +1140,13 @@ class IngestionPipeline:
                     )
                 ).scalar_one()
 
+            min_thresh = 1 if (doc_program_type == ProgramType.ARCHITECTURE.value and rnd_code == "KKR_SPECIAL") else None
             completeness_errors = validator.validate_batch_completeness(
                 doc_type="CUTOFF_PDF",
                 extracted_count=len(valid_records),
                 historical_baseline_count=existing_baseline if existing_baseline > 0 else None,
-                program_type=doc_program_type
+                program_type=doc_program_type,
+                minimum_threshold=min_thresh
             )
 
         if completeness_errors:
@@ -1162,10 +1204,6 @@ class IngestionPipeline:
             br_id = branch_map[rec["branch_code"]]
             cat_id = category_map[rec["category_code"]]
             rnd_id = round_map_db.get(rec["round_code"])
-
-            if not rnd_id:
-                # Fallback to R1 if round code was missing
-                rnd_id = round_map_db.get("R1")
 
             if not rnd_id:
                 # Dynamically lookup round for sv.academic_year

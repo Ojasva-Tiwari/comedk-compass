@@ -126,8 +126,8 @@ class DataValidator:
                 ))
                 continue
 
-            # 3. Round validity check: COMEDK general pathway is R1 -> R3 -> R4, with KKR_SPECIAL for Article 371J
-            valid_rounds = {"R1", "R3", "R4", "MOCK", "KKR_SPECIAL"}
+            # 3. Round validity check: COMEDK rounds across all years
+            valid_rounds = {"R1", "R3", "R4", "MOCK", "KKR_SPECIAL", "R2_PHASE2", "CONSOLIDATED_FINAL"}
             if not r_code or r_code not in valid_rounds:
                 errors.append(ValidationErrorItem(
                     entity_type="CUTOFF",

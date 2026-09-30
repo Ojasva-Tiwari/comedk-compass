@@ -66,28 +66,20 @@ class OfficialSourceDiscovery:
 
     @staticmethod
     def identify_round(title_or_url: str) -> Optional[str]:
-        s = title_or_url.lower()
-        if "mock" in s:
-            return "MOCK"
-        elif "round 1" in s or "round-1" in s or "round_1" in s:
-            return "R1"
-        elif "round 2" in s or "round-2" in s or "round_2" in s or "kkr" in s:
-            return "KKR_SPECIAL"
-        elif "round 3" in s or "round-3" in s or "round_3" in s:
-            return "R3"
-        elif "round 4" in s or "round-4" in s or "round_4" in s:
-            return "R4"
-        return None
+        from backend.app.ingestion.classifier import DocumentClassifier
+        return DocumentClassifier.extract_counselling_round(title_or_url)
 
     async def discover_all(self) -> List[DiscoveredSource]:
         discovered: List[DiscoveredSource] = []
         seen_urls = set()
 
+        portal_url = f"https://www.comedk.org/counselling-document-{self.academic_year}" if self.academic_year != 2026 else self.OFFICIAL_COUNSELLING_DOCS_URL
+
         # 1. Base official HTML pages
         base_pages = [
             (self.OFFICIAL_MEMBER_INSTITUTIONS_URL, "COMEDK Member Institutions Registry", DocumentType.MEMBER_INSTITUTIONS_HTML.value),
             (self.OFFICIAL_BE_COLLEGES_URL, "COMEDK Engineering Colleges Directory", DocumentType.BE_COLLEGES_HTML.value),
-            (self.OFFICIAL_COUNSELLING_DOCS_URL, f"COMEDK Counselling Documents Portal {self.academic_year}", DocumentType.COUNSELLING_PORTAL_HTML.value),
+            (portal_url, f"COMEDK Counselling Documents Portal {self.academic_year}", DocumentType.COUNSELLING_PORTAL_HTML.value),
         ]
 
         for url, title, dtype in base_pages:
@@ -105,7 +97,7 @@ class OfficialSourceDiscovery:
         # 2. Dynamic discovery from the official counselling page
         async with httpx.AsyncClient(timeout=settings.HTTP_TIMEOUT, follow_redirects=True) as client:
             try:
-                resp = await client.get(self.OFFICIAL_COUNSELLING_DOCS_URL, headers=self.headers)
+                resp = await client.get(portal_url, headers=self.headers)
                 if resp.status_code == 200:
                     soup = BeautifulSoup(resp.text, "html.parser")
                     for a in soup.find_all("a", href=True):
@@ -113,7 +105,7 @@ class OfficialSourceDiscovery:
                         if not href or href.startswith("#") or href.startswith("javascript:"):
                             continue
 
-                        full_url = urljoin(self.OFFICIAL_COUNSELLING_DOCS_URL, href)
+                        full_url = urljoin(portal_url, href)
                         if full_url in seen_urls:
                             continue
 

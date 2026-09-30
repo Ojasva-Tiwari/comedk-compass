@@ -75,6 +75,50 @@ OFFICIAL_COMEDK_SOURCES: List[RegisteredSourceConfig] = [
         parser_type="CounsellingPortalParser",
         parser_version="v1.0.0"
     ),
+    RegisteredSourceConfig(
+        source_code="COMEDK_COUNSELLING_PORTAL_2024",
+        source_name="COMEDK Counselling Documents Portal 2024",
+        url="https://www.comedk.org/counselling-document-2024",
+        source_type="OFFICIAL_PORTAL",
+        authority_level=SourceAuthorityLevel.OFFICIAL_PRIMARY.value,
+        is_enabled=True,
+        check_frequency_hours=24,
+        expected_document_types=[
+            DocumentType.COUNSELLING_PORTAL_HTML.value,
+            DocumentType.CUTOFF_PDF.value,
+            DocumentType.SEAT_MATRIX_PDF.value,
+            DocumentType.VACANT_SEATS_PDF.value,
+            DocumentType.FEE_STRUCTURE_PDF.value,
+            DocumentType.BRANCHES_OFFERED_PDF.value,
+            DocumentType.NOTIFICATION_PDF.value
+        ],
+        academic_year=2024,
+        document_type=DocumentType.COUNSELLING_PORTAL_HTML.value,
+        parser_type="CounsellingPortalParser",
+        parser_version="v1.0.0"
+    ),
+    RegisteredSourceConfig(
+        source_code="COMEDK_COUNSELLING_PORTAL_2023",
+        source_name="COMEDK Counselling Documents Portal 2023",
+        url="https://www.comedk.org/counselling-document-2023",
+        source_type="OFFICIAL_PORTAL",
+        authority_level=SourceAuthorityLevel.OFFICIAL_PRIMARY.value,
+        is_enabled=True,
+        check_frequency_hours=24,
+        expected_document_types=[
+            DocumentType.COUNSELLING_PORTAL_HTML.value,
+            DocumentType.CUTOFF_PDF.value,
+            DocumentType.SEAT_MATRIX_PDF.value,
+            DocumentType.VACANT_SEATS_PDF.value,
+            DocumentType.FEE_STRUCTURE_PDF.value,
+            DocumentType.BRANCHES_OFFERED_PDF.value,
+            DocumentType.NOTIFICATION_PDF.value
+        ],
+        academic_year=2023,
+        document_type=DocumentType.COUNSELLING_PORTAL_HTML.value,
+        parser_type="CounsellingPortalParser",
+        parser_version="v1.0.0"
+    ),
 ]
 
 class SourceRegistryService:

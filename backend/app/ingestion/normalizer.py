@@ -117,13 +117,26 @@ class Normalizer:
             return "MOCK", "Mock Round", 0
         if "ROUND 1" in r_str or "ROUND-1" in r_str or "R1" in r_str or "ROUND_1" in r_str:
             return "R1", "Round 1", 1
-        if "KKR" in r_str or "ROUND 2" in r_str or "ROUND-2" in r_str or "R2" in r_str or "ROUND_2" in r_str:
+        if "PHASE 1" in r_str or "PHASE1" in r_str:
+            return "KKR_SPECIAL", "Round 2 Phase 1 KKR Special Allotment", 2
+        if "PHASE 2" in r_str or "PHASE2" in r_str or "R2_PHASE2" in r_str or "R2 PHASE2" in r_str:
+            return "R2_PHASE2", "Round 2 Phase 2", 2
+        if "KKR" in r_str or "ROUND 2" in r_str or "ROUND-2" in r_str or "R2" in r_str or "ROUND_2" in r_str or "KKR_SPECIAL" in r_str:
             return "KKR_SPECIAL", "Round 2 KKR Special Allotment", 2
+        if "CONSOLIDATED" in r_str or "AFTER ALL ROUNDS" in r_str or "CONSOLIDATED_FINAL" in r_str:
+            return "CONSOLIDATED_FINAL", "Consolidated Cutoff After All Rounds", 99
         if "ROUND 3" in r_str or "ROUND-3" in r_str or "R3" in r_str or "ROUND_3" in r_str:
             return "R3", "Round 3", 3
         if "ROUND 4" in r_str or "ROUND-4" in r_str or "R4" in r_str or "ROUND_4" in r_str:
             return "R4", "Round 4", 4
 
+        # 2026 legacy fallback for round 2 (strictly KKR_SPECIAL, never standard R2)
+        if "ROUND 2" in r_str or "ROUND-2" in r_str or "R2" in r_str or "ROUND_2" in r_str:
+            return "KKR_SPECIAL", "Round 2 KKR Special Allotment", 2
+
         # Fallback to sanitized uppercase
         safe_code = re.sub(r'[^A-Z0-9]', '', r_str)
+        if safe_code == "R2":
+            # Safety check: standard R2 must never be emitted
+            return "KKR_SPECIAL", "Round 2 KKR Special Allotment", 2
         return safe_code or "UNKNOWN", round_raw, 99

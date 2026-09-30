@@ -168,20 +168,20 @@ def test_no_kkr_records_remain_under_standard_r2(db):
     ).scalar_one()
     assert r2_round_exists == 0, "Standard R2 round row should not exist in counselling_rounds"
 
-    # Check KKR_SPECIAL counts match audited totals
+    # Check KKR_SPECIAL counts match audited totals for 2026
     kkr_seat_count = db.execute(
         select(func.count(SeatRecord.id))
         .join(CounsellingRound, SeatRecord.round_id == CounsellingRound.id)
-        .where(CounsellingRound.code == "KKR_SPECIAL")
+        .where(CounsellingRound.code == "KKR_SPECIAL", SeatRecord.academic_year == 2026)
     ).scalar_one()
-    assert kkr_seat_count == 2172, f"Expected 2172 KKR_SPECIAL seat records, got {kkr_seat_count}"
+    assert kkr_seat_count == 2172, f"Expected 2172 2026 KKR_SPECIAL seat records, got {kkr_seat_count}"
 
     kkr_cutoff_count = db.execute(
         select(func.count(CutoffRecord.id))
         .join(CounsellingRound, CutoffRecord.round_id == CounsellingRound.id)
-        .where(CounsellingRound.code == "KKR_SPECIAL")
+        .where(CounsellingRound.code == "KKR_SPECIAL", CutoffRecord.academic_year == 2026)
     ).scalar_one()
-    assert kkr_cutoff_count == 185, f"Expected 185 KKR_SPECIAL cutoff records, got {kkr_cutoff_count}"
+    assert kkr_cutoff_count == 185, f"Expected 185 2026 KKR_SPECIAL cutoff records, got {kkr_cutoff_count}"
 
 
 # 5. Idempotent re-ingestion
@@ -272,7 +272,7 @@ def test_provenance_preserved_for_kkr_special(db):
     kkr_seats = db.execute(
         select(SeatRecord)
         .join(CounsellingRound, SeatRecord.round_id == CounsellingRound.id)
-        .where(CounsellingRound.code == "KKR_SPECIAL")
+        .where(CounsellingRound.code == "KKR_SPECIAL", SeatRecord.academic_year == 2026)
     ).scalars().all()
     assert len(kkr_seats) == 2172
 
@@ -294,7 +294,7 @@ def test_provenance_preserved_for_kkr_special(db):
     kkr_cutoffs = db.execute(
         select(CutoffRecord)
         .join(CounsellingRound, CutoffRecord.round_id == CounsellingRound.id)
-        .where(CounsellingRound.code == "KKR_SPECIAL")
+        .where(CounsellingRound.code == "KKR_SPECIAL", CutoffRecord.academic_year == 2026)
     ).scalars().all()
     assert len(kkr_cutoffs) == 185
 

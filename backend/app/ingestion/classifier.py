@@ -51,16 +51,38 @@ class DocumentClassifier:
         s = text_or_url.lower().replace("_", " ").replace("-", " ")
         if "mock" in s:
             return "MOCK"
+
+        # Check Phase 1 vs Phase 2 first
+        # In COMEDK history, Round 2 Phase 1 is KKR/Article 371J regional quota special allotment
+        if "kkr special" in s or "kkr_special" in s or "r2 kkr" in s or "phase 1" in s or "phase1" in s:
+            return "KKR_SPECIAL"
+        # Round 2 Phase 2 is General Merit Round 2 allotment
+        if "phase 2" in s or "phase2" in s or "r2 phase2" in s or "r2_phase2" in s:
+            return "R2_PHASE2"
+
         # Match Round 1, R1, Round-1, Round_1
         if re.search(r'\b(round\s*1|r\s*1)\b', s):
             return "R1"
-        # COMEDK Round 2 is strictly the KKR/Article 371J regional quota special allotment phase
-        if re.search(r'\b(round\s*2|r\s*2)\b', s) or "kkr special" in s or "kkr_special" in s or "r2 kkr" in s:
-            return "KKR_SPECIAL"
+
+        # Match Round 3, R3, Round-3, Round_3
         if re.search(r'\b(round\s*3|r\s*3)\b', s):
             return "R3"
-        if re.search(r'\b(round\s*4|r\s*4)\b', s) or "after all rounds" in s or "all rounds" in s:
+
+        # Match Round 4, R4, Round-4, Round_4
+        if re.search(r'\b(round\s*4|r\s*4)\b', s):
             return "R4"
+
+        # Match After All Rounds / Consolidated
+        if "after all rounds" in s or "all rounds" in s or "consolidated" in s:
+            year = cls.extract_academic_year(text_or_url, default=2026)
+            if year == 2025:
+                return "R4"
+            return "CONSOLIDATED_FINAL"
+
+        # 2026 fallback where Round 2 specifically represents the KKR special allotment
+        if re.search(r'\b(round\s*2|r\s*2)\b', s) or "kkr" in s:
+            return "KKR_SPECIAL"
+
         return None
 
     @classmethod
