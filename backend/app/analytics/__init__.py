@@ -20,6 +20,12 @@ from backend.app.analytics.schemas import (
     AnalyticsReport,
 )
 from backend.app.analytics.service import HistoricalAnalyticsService
+from backend.app.analytics.backtesting import (
+    BacktestResearchEngine,
+    WindowBacktestResult,
+    ErrorMetrics,
+    IntervalMetrics,
+)
 
 __all__ = [
     "RankDirection",
@@ -38,4 +44,8 @@ __all__ = [
     "HistoricalAnomaly",
     "AnalyticsReport",
     "HistoricalAnalyticsService",
+    "BacktestResearchEngine",
+    "WindowBacktestResult",
+    "ErrorMetrics",
+    "IntervalMetrics",
 ]

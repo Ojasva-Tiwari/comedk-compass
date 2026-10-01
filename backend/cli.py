@@ -399,6 +399,65 @@ def cmd_historical_analysis(args):
             for k, cnt in rep.anomaly_summary.items():
                 print(f"  {k}: {cnt}")
             print("=" * 110 + "\n")
+        elif sub == "backtest":
+            from backend.app.analytics.backtesting import BacktestResearchEngine
+            engine = BacktestResearchEngine(db)
+
+            print("\n" + "=" * 110)
+            print("COMEDK COMPASS - CHRONOLOGICAL BACKTEST & PREDICTION RESEARCH REPORT")
+            print("=" * 110)
+
+            # 1. 2026 R1 Backtest
+            res_r1 = engine.run_r1_backtest(target_year=2026, program_type=args.program, category=args.category)
+            print(f"\n--- WINDOW 1: {res_r1.window_name} (Program: {res_r1.program_type}, Cat: {res_r1.category}) ---")
+            print(f"Train Years: {res_r1.train_years} | Target Year: {res_r1.target_year} | Scope: {res_r1.round_scope}")
+            print(f"Total Test Combos: {res_r1.total_test_combinations} | Evaluated (History >= 1): {res_r1.evaluated_combinations} | Cold Start: {res_r1.cold_start_combinations}")
+            print(f"Leakage Audit: {'PASSED' if res_r1.leakage_check_passed else 'FAILED'} ({res_r1.leakage_details})")
+
+            print("\nBaseline Point Forecast Accuracy:")
+            print(f"  {'MODEL':<35} {'MAE':<12} {'MedAE':<12} {'RMSE':<12} {'MdAPE':<10}")
+            print("  " + "-" * 75)
+            for mname, m in res_r1.baseline_metrics.items():
+                print(f"  {mname:<35} {m.mae:<12.1f} {m.med_ae:<12.1f} {m.rmse:<12.1f} {m.mdape:<10.2%}")
+
+            print("\nPrediction Interval Calibration (Target: 2026 R1):")
+            print(f"  {'INTERVAL METHOD':<35} {'COVERAGE':<12} {'MEDIAN WIDTH':<16} {'BELOW (SURPRISE)':<18} {'ABOVE'}")
+            print("  " + "-" * 90)
+            for iname, im in res_r1.interval_metrics.items():
+                print(f"  {iname:<35} {im.coverage:<12.1%} {im.median_width:<16.1f} {im.below_lower_rate:<18.1%} {im.above_upper_rate:.1%}")
+
+            print("\nError Stratification by Prior History Depth (Baseline A - Lag-1):")
+            for depth, dm in sorted(res_r1.depth_breakdown.items()):
+                print(f"  Depth n_prior={depth}: N={dm.sample_size:<4} | MAE={dm.mae:<8.1f} | MedAE={dm.med_ae:<8.1f} | MdAPE={dm.mdape:.2%}")
+
+            # 2. 2026 Terminal Backtest
+            res_term = engine.run_terminal_backtest(target_year=2026, program_type=args.program, category=args.category)
+            print(f"\n--- WINDOW 2: {res_term.window_name} (Program: {res_term.program_type}, Cat: {res_term.category}) ---")
+            print(f"Train Years: {res_term.train_years} | Target Year: {res_term.target_year} | Scope: {res_term.round_scope}")
+            print(f"Total Test Combos: {res_term.total_test_combinations} | Evaluated (History >= 1): {res_term.evaluated_combinations} | Cold Start: {res_term.cold_start_combinations}")
+
+            print("\nBaseline Point Forecast Accuracy:")
+            print(f"  {'MODEL':<35} {'MAE':<12} {'MedAE':<12} {'RMSE':<12} {'MdAPE':<10}")
+            print("  " + "-" * 75)
+            for mname, m in res_term.baseline_metrics.items():
+                print(f"  {mname:<35} {m.mae:<12.1f} {m.med_ae:<12.1f} {m.rmse:<12.1f} {m.mdape:<10.2%}")
+
+            print("\nPrediction Interval Calibration (Target: 2026 Terminal):")
+            print(f"  {'INTERVAL METHOD':<35} {'COVERAGE':<12} {'MEDIAN WIDTH':<16} {'BELOW (SURPRISE)':<18} {'ABOVE'}")
+            print("  " + "-" * 90)
+            for iname, im in res_term.interval_metrics.items():
+                print(f"  {iname:<35} {im.coverage:<12.1%} {im.median_width:<16.1f} {im.below_lower_rate:<18.1%} {im.above_upper_rate:.1%}")
+
+            # 3. Vacancy & Secondary Feature Utility
+            vac = engine.evaluate_vacancy_feature_utility()
+            print(f"\n--- SECONDARY FEATURE: SEAT INTAKE & VACANCY UTILITY ---")
+            print(f"Sample Size Evaluated: {vac.get('sample_size')}")
+            print(f"Correlation (Total Seats -> Prediction Error): r = {vac.get('correlation_seats_to_prediction_error')}")
+            print(f"Correlation (Total Seats -> Closing Rank):       r = {vac.get('correlation_seats_to_closing_rank')}")
+            print(f"Utility Finding: {vac.get('utility_assessment')}")
+            print(f"Detail: {vac.get('explanation')}")
+            print("=" * 110 + "\n")
+
     finally:
         db.close()
 
@@ -446,7 +505,7 @@ def main():
         "subcommand",
         nargs="?",
         default="report",
-        choices=["coverage", "movement", "volatility", "progression", "recency", "anomalies", "report"],
+        choices=["coverage", "movement", "volatility", "progression", "recency", "anomalies", "report", "backtest"],
         help="Analytics subcommand (default: report)"
     )
     p_analysis.add_argument("--scope", type=str, default="R1", help="Round scope (R1, TERMINAL, MOCK, etc.)")
