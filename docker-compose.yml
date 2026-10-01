@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: comedk_compass_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: comedk_compass_docker
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d comedk_compass_docker"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - comedk_net
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: comedk_compass_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgrespassword@db:5432/comedk_compass_docker
+      APP_ENV: development
+      PORT: "8000"
+      CORS_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    networks:
+      - comedk_net
+
+volumes:
+  pgdata:
+    name: comedk_compass_docker_pgdata
+
+networks:
+  comedk_net:
+    driver: bridge

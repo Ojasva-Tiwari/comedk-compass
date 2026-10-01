@@ -108,3 +108,40 @@ official COMEDK website (comedk.org)
 | `GET` | `/api/v1/cutoffs` | Published cutoff ranks filterable by college, branch, round, and quota |
 | `GET` | `/api/v1/seat-records` | Seat capacity and vacancy metrics |
 | `GET` | `/api/v1/fees` | Official tuition and total fee schedules |
+
+---
+
+## Containerization & CI/CD (Stage 3.8B)
+
+### 1. Local Docker Setup
+The repository includes a containerized local environment using Docker and Docker Compose. It provisions an isolated PostgreSQL database (`comedk_compass_docker`) that is completely separated from the host development database (`comedk_compass`).
+
+```bash
+# 1. Start the isolated PostgreSQL database
+docker compose up -d db
+
+# 2. Run Alembic migrations against the container database
+docker compose run --rm backend alembic upgrade head
+
+# 3. (Optional) Load the baseline test seed fixture
+docker compose run --rm backend python backend/tests/fixtures/load_seed.py
+
+# 4. Start the FastAPI backend service
+docker compose up -d backend
+```
+
+### 2. Standalone Docker Image Build
+The backend image is a hardened, multi-stage `python:3.13-slim` build running under an unprivileged user (`appuser`, UID 10001) with dynamic `$PORT` binding:
+
+```bash
+docker build -f backend/Dockerfile -t comedk-compass-backend:latest .
+```
+
+### 3. Container Health Probes
+- **Liveness Probe**: `GET http://localhost:8000/api/v1/health/live` (process health; does not query DB).
+- **Readiness Probe**: `GET http://localhost:8000/api/v1/health/ready` (dependency check; executes `SELECT 1`).
+
+### 4. CI/CD Architecture (GitHub Actions)
+The workflow in `.github/workflows/ci.yml` runs on push and pull request to `main`:
+- **Backend Job**: Spins up a `postgres:16-alpine` service container, sets up Python 3.13, installs `backend/requirements-dev.txt`, applies `alembic upgrade head` to an empty test DB, loads `baseline_seed.sql.gz`, and runs `pytest backend/tests -q`.
+- **Frontend Job**: Sets up Bun 1.2.2, executes `bun install --frozen-lockfile` using `bun.lock`, runs `bun test`, and verifies `bun run build`.
