@@ -6,6 +6,7 @@ from backend.app.api.v1.sources import router as sources_router
 from backend.app.api.v1.cutoffs import router as cutoffs_router
 from backend.app.api.v1.seats import router as seats_router
 from backend.app.api.v1.fees import router as fees_router
+from backend.app.api.v1.analytics import router as analytics_router
 
 v1_router = APIRouter()
 v1_router.include_router(health_router)
@@ -15,3 +16,4 @@ v1_router.include_router(sources_router)
 v1_router.include_router(cutoffs_router)
 v1_router.include_router(seats_router)
 v1_router.include_router(fees_router)
+v1_router.include_router(analytics_router)

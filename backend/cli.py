@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import sys
 import uuid
+from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
@@ -199,6 +200,208 @@ async def cmd_run(args):
     finally:
         db.close()
 
+def cmd_historical_analysis(args):
+    """Execute read-only historical cutoff analytics across 2023-2026."""
+    from backend.app.analytics.service import HistoricalAnalyticsService
+    db = SessionLocal()
+    try:
+        service = HistoricalAnalyticsService(db)
+        sub = args.subcommand or "report"
+
+        if sub == "coverage":
+            cov = service.get_coverage_summary()
+            print("\n" + "=" * 95)
+            print("COMEDK COMPASS - HISTORICAL COVERAGE & RECONCILIATION SUMMARY (2023-2026)")
+            print("=" * 95)
+            print(f"Academic Years Available:     {cov.years_available}")
+            print(f"Total Cutoff Records in DB:    {cov.total_records:,}")
+            print(f"Active Published Records:     {cov.published_records:,}")
+            print(f"Superseded Historical Records: {cov.superseded_records:,}")
+            print("\nRecords by Academic Year (Published vs Total):")
+            for yr in cov.years_available:
+                pub = cov.records_per_year.get(yr, 0)
+                tot = cov.total_records_per_year.get(yr, 0)
+                sup = cov.superseded_records_per_year.get(yr, 0)
+                colls = cov.colleges_per_year.get(yr, 0)
+                brs = cov.branches_per_year.get(yr, 0)
+                print(f"  {yr}: {pub:>5} published | {tot:>5} total ({sup} superseded) | {colls:>3} colleges | {brs:>2} branches")
+
+            if cov.excluded_records:
+                print(f"\nExact Excluded Records (SUPERSEDED Status, n={len(cov.excluded_records)}):")
+                print(f"  {'CUTOFF ID':<38} {'YEAR':<6} {'COLLEGE':<8} {'BRANCH':<8} {'ROUND':<8} {'STATUS':<12} {'RANK'}")
+                print("  " + "-" * 90)
+                for ex in cov.excluded_records:
+                    print(f"  {str(ex.cutoff_id):<38} {ex.academic_year:<6} {ex.college_code:<8} {ex.branch_code:<8} {ex.round_code:<8} {ex.status:<12} {ex.closing_rank}")
+
+            print("\nRecords by Category (Published):")
+            for cat, count in cov.records_per_category.items():
+                print(f"  {cat:<10}: {count:>6} cutoffs")
+
+            print("\nRecords by Program Type (Published):")
+            for prog, count in cov.records_per_program_type.items():
+                print(f"  {prog:<15}: {count:>6} cutoffs")
+
+            print("\nLongitudinal Observation Depth (Unique Canonical Combinations):")
+            for depth, count in cov.observation_depth_counts.items():
+                print(f"  n = {depth}: {count:>5} combinations")
+
+            print("\nTop Observed Year Patterns:")
+            for pattern, count in list(cov.years_observed_patterns.items())[:6]:
+                print(f"  [{pattern}]: {count:>4} combinations")
+            print("=" * 95 + "\n")
+
+        elif sub == "movement":
+            items, agg = service.get_yoy_movement(
+                from_year=args.from_year,
+                to_year=args.to_year,
+                round_scope=args.scope,
+                program_type=args.program,
+                category=args.category,
+            )
+            print("\n" + "=" * 105)
+            print(f"COMEDK COMPASS - YEAR-OVER-YEAR CUTOFF MOVEMENT ({args.from_year} -> {args.to_year})")
+            print("=" * 105)
+            if not agg:
+                print(f"No comparable data found for transition {args.from_year} -> {args.to_year} (Scope: {args.scope})\n")
+                return
+
+            print(f"Round Scope:     {args.scope} ({agg.from_round} -> {agg.to_round})")
+            print(f"Program Type:    {args.program} | Category: {args.category}")
+            print(f"Comparability:   {agg.comparability.value}")
+            print(f"Matched Pairs:   {agg.matched_pairs:,}")
+            print(f"Median Abs Move: {agg.median_absolute_movement:+.1f} ranks")
+            print(f"Mean Abs Move:   {agg.mean_absolute_movement:+.1f} ranks")
+            print(f"Median Rel Move: {agg.median_relative_movement:+.2%}")
+            print(f"Mean Rel Move:   {agg.mean_relative_movement:+.2%}")
+            print(f"Earlier Ranks:   {agg.earlier_numerically_count} (strengthened numerically)")
+            print(f"Later Ranks:     {agg.later_numerically_count} (relaxed numerically)")
+            print(f"Unchanged:       {agg.unchanged_count}")
+            print("-" * 105)
+            print(f"{'COLLEGE':<10} {'BRANCH':<10} {'PREV RANK':<12} {'CURR RANK':<12} {'ABS DIFF':<12} {'REL DIFF':<12} {'DIRECTION'}")
+            print("-" * 105)
+            for it in items[:15]:
+                print(f"{it.college_code:<10} {it.branch_code:<10} {it.previous_closing_rank:<12} {it.current_closing_rank:<12} {it.absolute_movement:<+12} {it.relative_movement:<+11.2%} {it.direction.value}")
+            if len(items) > 15:
+                print(f"  ... and {len(items) - 15} more matched combinations.")
+            print("=" * 105 + "\n")
+
+        elif sub == "volatility":
+            summaries = service.get_volatility_summary_by_n(
+                round_scope=args.scope,
+                program_type=args.program,
+                category=args.category,
+            )
+            print("\n" + "=" * 105)
+            print(f"COMEDK COMPASS - HISTORICAL VOLATILITY STRATIFIED BY OBSERVATION COUNT (n)")
+            print("=" * 105)
+            print(f"Scope: {args.scope} | Program: {args.program} | Category: {args.category}")
+            print("-" * 105)
+            print(f"{'OBS (n)':<10} {'COMBOS':<10} {'MEDIAN CV':<14} {'MEAN CV':<14} {'CV RANGE':<22} {'MEDIAN ABS':<14} {'DATA QUALITY'}")
+            print("-" * 105)
+            for n, s in summaries.items():
+                med_cv = f"{s.median_cv:.2%}" if s.median_cv is not None else "N/A"
+                mean_cv = f"{s.mean_cv:.2%}" if s.mean_cv is not None else "N/A"
+                cv_range = f"[{s.min_cv:.1%} - {s.max_cv:.1%}]" if s.min_cv is not None and s.max_cv is not None else "N/A"
+                med_abs = f"{s.median_absolute_movement:.1f}" if s.median_absolute_movement is not None else "N/A"
+                print(f"{n:<10} {s.combination_count:<10} {med_cv:<14} {mean_cv:<14} {cv_range:<22} {med_abs:<14} {s.volatility_data_quality.value}")
+            print("=" * 105 + "\n")
+
+        elif sub == "progression":
+            progressions = service.get_round_progression(
+                academic_year=args.year,
+                program_type=args.program,
+                category=args.category,
+            )
+            print("\n" + "=" * 110)
+            print(f"COMEDK COMPASS - WITHIN-YEAR ROUND PROGRESSION ({args.year if args.year else 'ALL YEARS'})")
+            print("=" * 110)
+            print(f"{'YEAR':<6} {'TRANSITION':<22} {'PAIRS':<8} {'MEDIAN ABS':<14} {'MEDIAN REL':<14} {'EARLIER':<10} {'LATER':<10} {'UNCHANGED'}")
+            print("-" * 110)
+            for p in progressions:
+                trans = f"{p.from_round} -> {p.to_round}"
+                print(f"{p.academic_year:<6} {trans:<22} {p.matched_pairs:<8} {p.median_absolute_movement:<+14.1f} {p.median_relative_movement:<+14.2%} {p.earlier_numerically_count:<10} {p.later_numerically_count:<10} {p.unchanged_count}")
+            print("=" * 110 + "\n")
+
+        elif sub == "recency":
+            comparisons = service.get_recency_evidence(
+                anchor_year=2026,
+                round_scope=args.scope,
+                program_type=args.program,
+                category=args.category,
+            )
+            print("\n" + "=" * 110)
+            print(f"COMEDK COMPASS - RECENCY DISTANCE EVIDENCE (Anchor Year: 2026, Scope: {args.scope})")
+            print("=" * 110)
+            for c in comparisons:
+                print(f"Program: {c.program_type} | Category: {c.category} | Triples Evaluated: {c.evaluated_triples}")
+                print(f"Recent Year: {c.recent_year} | Older Year: {c.older_year}")
+                print(f"Recent Closer Count:      {c.recent_closer_count} ({c.recent_closer_percentage:.1f}%)")
+                print(f"Older Closer Count:       {c.older_closer_count}")
+                print(f"Equal Distance Count:     {c.equal_distance_count}")
+                print(f"Recent Median Abs Dist:   {c.recent_median_absolute_distance:.1f} ranks ({c.recent_median_relative_distance:.1%})")
+                print(f"Older Median Abs Dist:    {c.older_median_absolute_distance:.1f} ranks ({c.older_median_relative_distance:.1%})")
+                diff_pct = ((c.older_median_absolute_distance - c.recent_median_absolute_distance) / c.recent_median_absolute_distance) * 100.0 if c.recent_median_absolute_distance > 0 else 0.0
+                print(f"Older Distance Excess:    +{diff_pct:.1f}% larger than recent year")
+            print("=" * 110 + "\n")
+
+        elif sub == "anomalies":
+            anomalies = service.get_anomalies()
+            summary = defaultdict(int)
+            for a in anomalies:
+                summary[a.anomaly_type.value] += 1
+            print("\n" + "=" * 110)
+            print("COMEDK COMPASS - FACTUAL DATA ANOMALIES REPORT")
+            print("=" * 110)
+            for atype, count in summary.items():
+                print(f"  {atype:<32}: {count:>5} detected")
+
+            backward = [a for a in anomalies if a.anomaly_type.value == "BACKWARD_ROUND_MOVEMENT"]
+            print(f"\nBackward Numerical Round Movement Cases (Sample 10 of {len(backward)}):")
+            print("  Direction:   EARLIER_NUMERICALLY")
+            print("  Cause:       NOT_DETERMINABLE_FROM_AVAILABLE_DATA")
+            print("  Description: Observed closing rank decreased numerically between rounds.")
+            print("-" * 110)
+            print(f"{'YEAR':<6} {'COLLEGE':<10} {'BRANCH':<10} {'ROUND':<16} {'FROM RANK':<12} {'TO RANK':<12} {'DELTA':<10} {'DIRECTION'}")
+            print("-" * 110)
+            for b in backward[:10]:
+                rnd = f"{b.from_round}->{b.to_round}"
+                print(f"{b.academic_year:<6} {b.college_code:<10} {b.branch_code:<10} {rnd:<16} {b.from_rank:<12} {b.to_rank:<12} {b.rank_delta:<+10} {b.direction.value}")
+            print("=" * 110 + "\n")
+
+        elif sub == "report":
+            rep = service.generate_report()
+            cov = rep.coverage
+            print("\n" + "=" * 110)
+            print("COMEDK COMPASS - COMPLETE HISTORICAL ANALYTICS VALIDATION REPORT (2023-2026)")
+            print("=" * 110)
+            print(f"Total Published Cutoffs: {cov.total_records:,} across {len(cov.years_available)} years ({cov.years_available})")
+            print(f"Records by Year: {dict(cov.records_per_year)}")
+            print(f"Observation Depth: {dict(cov.observation_depth_counts)}")
+
+            print("\n--- VOLATILITY STRATIFIED BY OBSERVATION COUNT (TERMINAL SCOPE) ---")
+            for n, v in rep.volatility_by_n.items():
+                med_cv = f"{v.median_cv:.2%}" if v.median_cv is not None else "N/A"
+                print(f"  n={n}: Combos={v.combination_count:<4} | Median CV={med_cv:<8} | Quality={v.volatility_data_quality.value}")
+
+            print("\n--- WITHIN-YEAR ROUND PROGRESSION ---")
+            for p in rep.round_progressions:
+                print(f"  {p.academic_year} {p.from_round:<12} -> {p.to_round:<18}: Pairs={p.matched_pairs:<4} | Med Abs={p.median_absolute_movement:<+8.1f} | Med Rel={p.median_relative_movement:<+7.1%}")
+
+            print("\n--- YEAR-OVER-YEAR R1 PROGRESSION ---")
+            for y in rep.yoy_movements:
+                print(f"  {y.transition}: Pairs={y.matched_pairs:<4} | Med Abs={y.median_absolute_movement:<+8.1f} | Med Rel={y.median_relative_movement:<+7.1%} | Earlier={y.earlier_numerically_count} | Later={y.later_numerically_count}")
+
+            print("\n--- RECENCY DISTANCE EVIDENCE (ANCHOR 2026, R1) ---")
+            for r in rep.recency_evidence:
+                print(f"  Recent Closer: {r.recent_closer_count}/{r.evaluated_triples} ({r.recent_closer_percentage:.1f}%) | Recent Med Dist={r.recent_median_absolute_distance:.1f} | Older Med Dist={r.older_median_absolute_distance:.1f}")
+
+            print(f"\n--- FACTUAL ANOMALIES ---")
+            for k, cnt in rep.anomaly_summary.items():
+                print(f"  {k}: {cnt}")
+            print("=" * 110 + "\n")
+    finally:
+        db.close()
+
 def main():
     parser = argparse.ArgumentParser(
         prog="comedk-cli",
@@ -237,6 +440,22 @@ def main():
     p_run.add_argument("--max-docs", type=int, default=None, help="Max cutoff documents to process")
     p_run.add_argument("--source-version", type=str, default=None, help="UUID of specific SourceVersion to ingest")
 
+    # historical-analysis
+    p_analysis = subparsers.add_parser("historical-analysis", help="Historical cutoff analytics and empirical validation")
+    p_analysis.add_argument(
+        "subcommand",
+        nargs="?",
+        default="report",
+        choices=["coverage", "movement", "volatility", "progression", "recency", "anomalies", "report"],
+        help="Analytics subcommand (default: report)"
+    )
+    p_analysis.add_argument("--scope", type=str, default="R1", help="Round scope (R1, TERMINAL, MOCK, etc.)")
+    p_analysis.add_argument("--from-year", type=int, default=2024, help="From academic year for YoY movement")
+    p_analysis.add_argument("--to-year", type=int, default=2026, help="To academic year for YoY movement")
+    p_analysis.add_argument("--year", type=int, default=2026, help="Academic year for round progression")
+    p_analysis.add_argument("--program", type=str, default="ENGINEERING", help="Program type (ENGINEERING, ARCHITECTURE)")
+    p_analysis.add_argument("--category", type=str, default="GM", help="Category code (GM, KKR)")
+
     args = parser.parse_args()
 
     if args.command == "sources":
@@ -251,6 +470,8 @@ def main():
         cmd_review(args)
     elif args.command == "run":
         asyncio.run(cmd_run(args))
+    elif args.command == "historical-analysis":
+        cmd_historical_analysis(args)
 
 if __name__ == "__main__":
     main()
