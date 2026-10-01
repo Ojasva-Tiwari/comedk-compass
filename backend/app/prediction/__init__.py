@@ -10,6 +10,9 @@ from backend.app.prediction.schemas import (
     EvidenceItem,
     PredictionRequest,
     PredictionResult,
+    CandidateEvidenceState,
+    CandidateDecisionRequest,
+    CandidateDecisionResponse,
 )
 from backend.app.prediction.engine import ClosingRankPredictionEngine
 from backend.app.prediction.service import (
@@ -17,6 +20,7 @@ from backend.app.prediction.service import (
     PredictionNotFoundError,
     PredictionValidationError,
 )
+from backend.app.prediction.decision_service import CandidateDecisionService
 
 __all__ = [
     "PredictionState",
@@ -28,8 +32,12 @@ __all__ = [
     "EvidenceItem",
     "PredictionRequest",
     "PredictionResult",
+    "CandidateEvidenceState",
+    "CandidateDecisionRequest",
+    "CandidateDecisionResponse",
     "ClosingRankPredictionEngine",
     "PredictionService",
+    "CandidateDecisionService",
     "PredictionNotFoundError",
     "PredictionValidationError",
 ]
