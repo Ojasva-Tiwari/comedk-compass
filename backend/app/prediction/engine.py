@@ -72,6 +72,27 @@ class ClosingRankPredictionEngine:
         self.model_version = model_version
         self.dataset_version = dataset_version
         self.feature_definition_version = feature_definition_version
+        self._canonical_cache: Dict[Tuple, List[Dict[str, Any]]] = {}
+
+    def _get_canonical_records(
+        self,
+        academic_year: Optional[int] = None,
+        program_type: Optional[str] = None,
+        category_code: Optional[str] = None,
+        round_code: Optional[str] = None,
+        status: str = RecordStatus.PUBLISHED.value,
+    ) -> List[Dict[str, Any]]:
+        """Instance-cached retrieval of normalized canonical records."""
+        cache_key = (academic_year, program_type, category_code, round_code, status)
+        if cache_key not in self._canonical_cache:
+            self._canonical_cache[cache_key] = self.analytics_svc.get_canonical_records(
+                academic_year=academic_year,
+                program_type=program_type,
+                category_code=category_code,
+                round_code=round_code,
+                status=status,
+            )
+        return self._canonical_cache[cache_key]
 
     def predict(self, request: PredictionRequest) -> PredictionResult:
         """Main prediction entrypoint dispatching across prediction states."""
@@ -119,7 +140,7 @@ class ClosingRankPredictionEngine:
         target_year = request.academic_year
 
         # Query all historical PUBLISHED R1 cutoffs strictly prior to target_year
-        records = self.analytics_svc.get_canonical_records(
+        records = self._get_canonical_records(
             program_type=request.program_type,
             category_code=request.category,
             round_code=ROUND_R1,
@@ -241,7 +262,7 @@ class ClosingRankPredictionEngine:
         target_year = request.academic_year
 
         # 1. Check for current-year Round 1 cutoff (strictly preceding round)
-        r1_records = self.analytics_svc.get_canonical_records(
+        r1_records = self._get_canonical_records(
             academic_year=target_year,
             program_type=request.program_type,
             category_code=request.category,
@@ -255,7 +276,7 @@ class ClosingRankPredictionEngine:
                 break
 
         # 2. Query historical R3 cutoffs from prior years (< target_year)
-        hist_r3_records = self.analytics_svc.get_canonical_records(
+        hist_r3_records = self._get_canonical_records(
             program_type=request.program_type,
             category_code=request.category,
             round_code=ROUND_R3,
@@ -394,7 +415,7 @@ class ClosingRankPredictionEngine:
         target_year = request.academic_year
 
         # 1. Query current-year Round 3 cutoff if available (for 2026 progression: R1 -> R3 -> R4)
-        r3_records = self.analytics_svc.get_canonical_records(
+        r3_records = self._get_canonical_records(
             academic_year=target_year,
             program_type=request.program_type,
             category_code=request.category,
@@ -538,7 +559,7 @@ class ClosingRankPredictionEngine:
         self, from_round: str, to_round: str, target_year: int, program_type: str, category: str
     ) -> Tuple[float, float]:
         """Learn median absolute and relative round-to-round movement from prior training years."""
-        recs = self.analytics_svc.get_canonical_records(
+        recs = self._get_canonical_records(
             program_type=program_type,
             category_code=category,
             status=RecordStatus.PUBLISHED.value,
@@ -565,7 +586,7 @@ class ClosingRankPredictionEngine:
         self, college_id: UUID, branch_id: UUID, target_year: int, program_type: str, category: str
     ) -> Dict[int, float]:
         """Extract terminal cutoffs strictly prior to target_year."""
-        recs = self.analytics_svc.get_canonical_records(
+        recs = self._get_canonical_records(
             program_type=program_type,
             category_code=category,
             status=RecordStatus.PUBLISHED.value,

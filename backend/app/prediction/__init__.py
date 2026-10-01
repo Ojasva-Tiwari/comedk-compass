@@ -12,6 +12,11 @@ from backend.app.prediction.schemas import (
     PredictionResult,
 )
 from backend.app.prediction.engine import ClosingRankPredictionEngine
+from backend.app.prediction.service import (
+    PredictionService,
+    PredictionNotFoundError,
+    PredictionValidationError,
+)
 
 __all__ = [
     "PredictionState",
@@ -24,4 +29,7 @@ __all__ = [
     "PredictionRequest",
     "PredictionResult",
     "ClosingRankPredictionEngine",
+    "PredictionService",
+    "PredictionNotFoundError",
+    "PredictionValidationError",
 ]
