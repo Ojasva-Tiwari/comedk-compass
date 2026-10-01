@@ -438,7 +438,7 @@ function PredictorPage() {
               </div>
               <p>
                 <strong>Descriptive Positioning:</strong> The decision layer evaluates where your rank
-                sits relative to the model's calibrated uncertainty interval $[L, U]$ and estimate $\hat{C}$.
+                sits relative to the model's calibrated uncertainty interval [L, U] and closing rank estimate.
               </p>
               <p>
                 <strong>Inverse Rank Semantics:</strong> A lower numerical rank represents a stronger
