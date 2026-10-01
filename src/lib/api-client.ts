@@ -309,6 +309,21 @@ export const CANONICAL_BRANCHES: BranchOption[] = [
   },
 ];
 
+export const DEFAULT_API_TIMEOUT_MS = 10000;
+
+/**
+ * Creates an AbortSignal that aborts after timeoutMs.
+ * Uses native AbortSignal.timeout when available, falling back to AbortController.
+ */
+export function createTimeoutSignal(timeoutMs: number = DEFAULT_API_TIMEOUT_MS): AbortSignal {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(timeoutMs);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(new Error("TimeoutError")), timeoutMs);
+  return controller.signal;
+}
+
 const API_BASE_URL =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE_URL) ||
   "http://localhost:8000/api/v1";
@@ -317,9 +332,11 @@ const API_BASE_URL =
  * Predict COMEDK Closing Rank via POST /api/v1/predictor/chances.
  */
 export async function predictClosingRank(
-  request: PredictionRequest
+  request: PredictionRequest,
+  signal?: AbortSignal
 ): Promise<PredictionResult> {
   const url = `${API_BASE_URL}/predictor/chances`;
+  const timeoutSignal = signal || createTimeoutSignal(DEFAULT_API_TIMEOUT_MS);
 
   let response: Response;
   try {
@@ -330,8 +347,18 @@ export async function predictClosingRank(
         Accept: "application/json",
       },
       body: JSON.stringify(request),
+      signal: timeoutSignal,
     });
   } catch (err: unknown) {
+    const isTimeout =
+      (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) ||
+      (typeof DOMException !== "undefined" && err instanceof DOMException && err.name === "TimeoutError");
+    if (isTimeout) {
+      throw new PredictionApiError(
+        0,
+        "Prediction request timed out after 10 seconds. Please check your connection and try again."
+      );
+    }
     const message =
       err instanceof Error ? err.message : "Failed to connect to Prediction API server.";
     throw new PredictionApiError(
@@ -373,9 +400,11 @@ export async function predictClosingRank(
  * Evaluates candidate rank descriptively against the historical prediction interval.
  */
 export async function evaluateCandidateDecision(
-  request: CandidateDecisionRequest
+  request: CandidateDecisionRequest,
+  signal?: AbortSignal
 ): Promise<CandidateDecisionResponse> {
   const url = `${API_BASE_URL}/predictor/decision`;
+  const timeoutSignal = signal || createTimeoutSignal(DEFAULT_API_TIMEOUT_MS);
 
   let response: Response;
   try {
@@ -386,8 +415,18 @@ export async function evaluateCandidateDecision(
         Accept: "application/json",
       },
       body: JSON.stringify(request),
+      signal: timeoutSignal,
     });
   } catch (err: unknown) {
+    const isTimeout =
+      (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) ||
+      (typeof DOMException !== "undefined" && err instanceof DOMException && err.name === "TimeoutError");
+    if (isTimeout) {
+      throw new PredictionApiError(
+        0,
+        "Candidate decision analysis timed out after 10 seconds. Please try again."
+      );
+    }
     const message =
       err instanceof Error ? err.message : "Failed to connect to Prediction API server.";
     throw new PredictionApiError(
@@ -436,11 +475,14 @@ export async function evaluateCandidateDecision(
 /**
  * Fetch colleges list from backend with fallback to canonical seed list.
  */
-export async function fetchColleges(query?: string): Promise<CollegeOption[]> {
+export async function fetchColleges(query?: string, signal?: AbortSignal): Promise<CollegeOption[]> {
   try {
     const params = new URLSearchParams({ limit: "200" });
     if (query) params.set("query", query);
-    const response = await fetch(`${API_BASE_URL}/colleges?${params.toString()}`);
+    const timeoutSignal = signal || createTimeoutSignal(DEFAULT_API_TIMEOUT_MS);
+    const response = await fetch(`${API_BASE_URL}/colleges?${params.toString()}`, {
+      signal: timeoutSignal,
+    });
     if (response.ok) {
       const data = await response.json();
       if (Array.isArray(data?.items) && data.items.length > 0) {
@@ -471,7 +513,8 @@ export async function fetchColleges(query?: string): Promise<CollegeOption[]> {
  * Fetch branches list from backend with fallback to canonical seed list.
  */
 export async function fetchBranches(
-  programType: "ENGINEERING" | "ARCHITECTURE" = "ENGINEERING"
+  programType: "ENGINEERING" | "ARCHITECTURE" = "ENGINEERING",
+  signal?: AbortSignal
 ): Promise<BranchOption[]> {
   try {
     const params = new URLSearchParams({
@@ -479,7 +522,10 @@ export async function fetchBranches(
       program_type: programType,
       is_canonical: "true",
     });
-    const response = await fetch(`${API_BASE_URL}/branches?${params.toString()}`);
+    const timeoutSignal = signal || createTimeoutSignal(DEFAULT_API_TIMEOUT_MS);
+    const response = await fetch(`${API_BASE_URL}/branches?${params.toString()}`, {
+      signal: timeoutSignal,
+    });
     if (response.ok) {
       const data = await response.json();
       if (Array.isArray(data?.items) && data.items.length > 0) {

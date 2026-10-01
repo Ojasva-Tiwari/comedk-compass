@@ -20,39 +20,42 @@ class SourceHealthService:
         sources = self.db.execute(select(Source).order_by(Source.source_code)).scalars().all()
         now = datetime.now(timezone.utc)
 
+        # Batch query 1: Pending review item counts grouped by source_id
+        pending_stmt = (
+            select(IngestionReviewItem.source_id, func.count(IngestionReviewItem.id))
+            .where(IngestionReviewItem.status == ReviewStatus.PENDING_REVIEW.value)
+            .group_by(IngestionReviewItem.source_id)
+        )
+        pending_map = dict(self.db.execute(pending_stmt).all())
+
+        # Batch query 2: Total source versions grouped by source_id
+        total_v_stmt = (
+            select(SourceVersion.source_id, func.count(SourceVersion.id))
+            .group_by(SourceVersion.source_id)
+        )
+        total_v_map = dict(self.db.execute(total_v_stmt).all())
+
+        # Batch query 3: All source versions ordered by created_at desc to resolve latest and latest_published
+        all_versions = self.db.execute(
+            select(SourceVersion).order_by(desc(SourceVersion.created_at))
+        ).scalars().all()
+        latest_version_map: Dict[Any, SourceVersion] = {}
+        latest_published_map: Dict[Any, SourceVersion] = {}
+        for v in all_versions:
+            if v.source_id not in latest_version_map:
+                latest_version_map[v.source_id] = v
+            if v.processing_status == RecordStatus.PUBLISHED.value and v.source_id not in latest_published_map:
+                latest_published_map[v.source_id] = v
+
         source_reports: List[Dict[str, Any]] = []
         for s in sources:
-            # Latest source version
-            latest_version = self.db.execute(
-                select(SourceVersion)
-                .where(SourceVersion.source_id == s.id)
-                .order_by(desc(SourceVersion.created_at))
-            ).scalars().first()
-
-            # Latest published version
-            latest_published = self.db.execute(
-                select(SourceVersion)
-                .where(
-                    SourceVersion.source_id == s.id,
-                    SourceVersion.processing_status == RecordStatus.PUBLISHED.value
-                )
-                .order_by(desc(SourceVersion.created_at))
-            ).scalars().first()
-
-            # Pending reviews for this source
-            pending_reviews = self.db.execute(
-                select(func.count(IngestionReviewItem.id)).where(
-                    IngestionReviewItem.source_id == s.id,
-                    IngestionReviewItem.status == ReviewStatus.PENDING_REVIEW.value
-                )
-            ).scalar_one()
-
-            # Total version count
-            total_versions = self.db.execute(
-                select(func.count(SourceVersion.id)).where(SourceVersion.source_id == s.id)
-            ).scalar_one()
+            latest_version = latest_version_map.get(s.id)
+            latest_published = latest_published_map.get(s.id)
+            pending_reviews = pending_map.get(s.id, 0)
+            total_versions = total_v_map.get(s.id, 0)
 
             # Evaluate health status
+
             status = "HEALTHY"
             if not s.is_enabled:
                 status = "DISABLED"

@@ -105,7 +105,7 @@ def test_medical_and_dental_exclusion_from_engineering_apis(client):
 
 def test_data_health_institution_counts(client):
     """Verify that /api/v1/data-health reports institution_type_counts breakdown."""
-    response = client.get("/api/v1/data-health")
+    response = client.get("/api/v1/data-health", headers={"X-Admin-Key": "dev-admin-key"})
     assert response.status_code == 200
     data = response.json()
     assert "institution_type_counts" in data

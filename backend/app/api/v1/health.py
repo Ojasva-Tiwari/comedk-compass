@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, text
 
 from backend.app.database import get_db
 from backend.app.config import settings
 from backend.app.core.enums import RecordStatus, RunStatus, ValidationSeverity
+from backend.app.core.security import verify_admin_key
 from backend.app.schemas.health import HealthResponse, DataHealthResponse, IngestionRunSummary
 from backend.app.models import (
     College,
@@ -21,14 +22,48 @@ from backend.app.models import (
 
 router = APIRouter(tags=["Health & Monitoring"])
 
+@router.get("/health/live", summary="Process Liveness Probe")
+def get_liveness():
+    """Liveness probe: verifies the FastAPI application process is alive.
+    MUST NOT query PostgreSQL or any external dependency.
+    """
+    return {
+        "status": "alive",
+        "timestamp": datetime.now(timezone.utc),
+        "environment": settings.APP_ENV,
+    }
+
+@router.get("/health/ready", summary="Dependency Readiness Probe")
+def get_readiness(db: Session = Depends(get_db)):
+    """Readiness probe: verifies the application can serve traffic by checking
+    PostgreSQL connectivity via a lightweight SELECT 1.
+    """
+    try:
+        db.execute(text("SELECT 1"))
+        return {
+            "status": "ready",
+            "database": "connected",
+            "timestamp": datetime.now(timezone.utc),
+            "environment": settings.APP_ENV,
+        }
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service unavailable",
+        )
+
 @router.get("/health", response_model=HealthResponse)
 def get_health(db: Session = Depends(get_db)):
+    """Legacy compatibility health endpoint."""
     try:
         db.execute(text("SELECT 1"))
         db_status = "connected"
-    except Exception as e:
-        db_status = f"unhealthy: {str(e)}"
-        raise HTTPException(status_code=503, detail=f"Database unavailable: {e}")
+    except Exception:
+        db_status = "unhealthy"
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service unavailable",
+        )
 
     return HealthResponse(
         status="healthy",
@@ -38,7 +73,11 @@ def get_health(db: Session = Depends(get_db)):
     )
 
 @router.get("/data-health", response_model=DataHealthResponse)
-def get_data_health(db: Session = Depends(get_db)):
+def get_data_health(
+    db: Session = Depends(get_db),
+    _: str = Depends(verify_admin_key)
+):
+
     col_count = db.scalar(select(func.count()).select_from(College)) or 0
     br_count = db.scalar(select(func.count()).select_from(Branch)) or 0
     cutoff_count = db.scalar(

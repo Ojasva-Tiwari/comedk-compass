@@ -81,9 +81,11 @@ class ClosingRankPredictionEngine:
         category_code: Optional[str] = None,
         round_code: Optional[str] = None,
         status: str = RecordStatus.PUBLISHED.value,
+        college_id: Optional[UUID] = None,
+        branch_id: Optional[UUID] = None,
     ) -> List[Dict[str, Any]]:
-        """Instance-cached retrieval of normalized canonical records."""
-        cache_key = (academic_year, program_type, category_code, round_code, status)
+        """Instance-cached retrieval of normalized canonical records with database-level filtering."""
+        cache_key = (academic_year, program_type, category_code, round_code, status, college_id, branch_id)
         if cache_key not in self._canonical_cache:
             self._canonical_cache[cache_key] = self.analytics_svc.get_canonical_records(
                 academic_year=academic_year,
@@ -91,6 +93,8 @@ class ClosingRankPredictionEngine:
                 category_code=category_code,
                 round_code=round_code,
                 status=status,
+                college_id=college_id,
+                branch_id=branch_id,
             )
         return self._canonical_cache[cache_key]
 
@@ -139,13 +143,16 @@ class ClosingRankPredictionEngine:
         """Predict Round 1 closing rank using strictly prior years' Round 1 cutoffs."""
         target_year = request.academic_year
 
-        # Query all historical PUBLISHED R1 cutoffs strictly prior to target_year
+        # Query all historical PUBLISHED R1 cutoffs strictly prior to target_year for target college & branch
         records = self._get_canonical_records(
             program_type=request.program_type,
             category_code=request.category,
             round_code=ROUND_R1,
             status=RecordStatus.PUBLISHED.value,
+            college_id=college_id,
+            branch_id=branch_id,
         )
+
 
         # Filter strictly for target college & branch, strictly prior to target_year
         prior_cutoffs: Dict[int, float] = {}
@@ -268,6 +275,8 @@ class ClosingRankPredictionEngine:
             category_code=request.category,
             round_code=ROUND_R1,
             status=RecordStatus.PUBLISHED.value,
+            college_id=college_id,
+            branch_id=branch_id,
         )
         current_r1: Optional[float] = None
         for r in r1_records:
@@ -281,11 +290,14 @@ class ClosingRankPredictionEngine:
             category_code=request.category,
             round_code=ROUND_R3,
             status=RecordStatus.PUBLISHED.value,
+            college_id=college_id,
+            branch_id=branch_id,
         )
         prior_r3: Dict[int, float] = {}
         for r in hist_r3_records:
             if r["college_id"] == college_id and r["branch_id"] == branch_id and r["academic_year"] < target_year:
                 prior_r3[r["academic_year"]] = float(r["closing_rank"])
+
 
         # 3. Check cold-start condition
         if current_r1 is None and len(prior_r3) == 0:
@@ -421,12 +433,15 @@ class ClosingRankPredictionEngine:
             category_code=request.category,
             round_code=ROUND_R3,
             status=RecordStatus.PUBLISHED.value,
+            college_id=college_id,
+            branch_id=branch_id,
         )
         current_r3: Optional[float] = None
         for r in r3_records:
             if r["college_id"] == college_id and r["branch_id"] == branch_id:
                 current_r3 = float(r["closing_rank"])
                 break
+
 
         # 2. Query historical terminal cutoffs strictly prior to target_year
         prior_term = self._get_historical_terminal_cutoffs(
@@ -590,7 +605,10 @@ class ClosingRankPredictionEngine:
             program_type=program_type,
             category_code=category,
             status=RecordStatus.PUBLISHED.value,
+            college_id=college_id,
+            branch_id=branch_id,
         )
+
         prior_term: Dict[int, float] = {}
         for r in recs:
             y = r["academic_year"]

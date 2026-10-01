@@ -104,11 +104,13 @@ class HistoricalAnalyticsService:
         category_code: Optional[str] = None,
         round_code: Optional[str] = None,
         status: str = RecordStatus.PUBLISHED.value,
+        college_id: Optional[uuid.UUID] = None,
+        branch_id: Optional[uuid.UUID] = None,
     ) -> List[Dict[str, Any]]:
         """Fetch cutoff records normalized to canonical college and branch grain.
 
-        Returns records mapped to:
-        (college_id, canonical_branch_id, program_type, category_code, academic_year, round_code).
+        When college_id and/or branch_id are supplied, filtering is applied directly
+        at the database SQL layer for optimal query execution and bounded memory usage.
         """
         # Load canonical branch map: branch_id -> (canonical_id, canonical_code, canonical_name)
         branches = self.db.query(Branch).all()
@@ -151,8 +153,21 @@ class HistoricalAnalyticsService:
             query = query.filter(Category.code == category_code)
         if round_code is not None:
             query = query.filter(CounsellingRound.code == round_code)
+        if college_id is not None:
+            query = query.filter(CutoffRecord.college_id == college_id)
+        if branch_id is not None:
+            # Map canonical and alias branch IDs associated with this branch
+            target_branch_ids = [
+                b_raw_id for b_raw_id, info in branch_map.items()
+                if info[0] == branch_id or b_raw_id == branch_id
+            ]
+            if target_branch_ids:
+                query = query.filter(CutoffRecord.branch_id.in_(target_branch_ids))
+            else:
+                query = query.filter(CutoffRecord.branch_id == branch_id)
 
         raw_rows = query.all()
+
 
         normalized_records = []
         for r in raw_rows:

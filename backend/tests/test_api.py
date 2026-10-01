@@ -6,7 +6,8 @@ def test_health_endpoint(client):
     assert data["database"] == "connected"
 
 def test_data_health_endpoint(client):
-    response = client.get("/api/v1/data-health")
+    # Data health is protected; verify authentication works with admin key
+    response = client.get("/api/v1/data-health", headers={"X-Admin-Key": "dev-admin-key"})
     assert response.status_code == 200
     data = response.json()
     assert "college_count" in data
@@ -54,7 +55,8 @@ def test_sources_endpoint(client):
     assert "items" in data
 
 def test_html_admin_data_health_page(client):
-    response = client.get("/data-health")
+    # HTML admin data health page is protected
+    response = client.get("/data-health", headers={"X-Admin-Key": "dev-admin-key"})
     assert response.status_code == 200
     assert "COMEDK Compass" in response.text
     assert "Engineering Colleges" in response.text
