@@ -34,7 +34,8 @@
  * 30. No backend files modified
  */
 
-import test from "node:test";
+import nodeTest from "node:test";
+const test = typeof globalThis.test === "function" ? globalThis.test : (typeof nodeTest === "function" ? nodeTest : nodeTest.test);
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
 
