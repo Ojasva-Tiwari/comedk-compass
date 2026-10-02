@@ -324,9 +324,12 @@ export function createTimeoutSignal(timeoutMs: number = DEFAULT_API_TIMEOUT_MS):
   return controller.signal;
 }
 
-const API_BASE_URL =
+const RAW_API_BASE_URL =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE_URL) ||
   "http://localhost:8000/api/v1";
+const API_BASE_URL = RAW_API_BASE_URL.endsWith("/api/v1")
+  ? RAW_API_BASE_URL
+  : `${RAW_API_BASE_URL.replace(/\/+$/, "")}/api/v1`;
 
 /**
  * Predict COMEDK Closing Rank via POST /api/v1/predictor/chances.
@@ -543,3 +546,248 @@ export async function fetchBranches(
 
   return CANONICAL_BRANCHES.filter((b) => b.program_type === programType);
 }
+
+export interface CutoffRecordItem {
+  id: string;
+  college_id: string;
+  branch_id: string;
+  category_id: string;
+  round_id: string;
+  source_version_id: string;
+  academic_year: number;
+  opening_rank: number | null;
+  closing_rank: number;
+  page_number?: number | null;
+  row_identifier?: string | null;
+  status: string;
+  created_at: string;
+}
+
+export interface PaginatedCutoffsResponse {
+  items: CutoffRecordItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface CutoffFilters {
+  college_id?: string;
+  branch_id?: string;
+  category_code?: string;
+  round_code?: string;
+  academic_year?: number;
+  institution_type?: string;
+  program_type?: string;
+  include_special_rounds?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+export async function fetchCutoffs(
+  filters: CutoffFilters = {},
+  signal?: AbortSignal
+): Promise<PaginatedCutoffsResponse> {
+  const params = new URLSearchParams();
+  if (filters.college_id) params.set("college_id", filters.college_id);
+  if (filters.branch_id) params.set("branch_id", filters.branch_id);
+  if (filters.category_code) params.set("category_code", filters.category_code);
+  if (filters.round_code && filters.round_code !== "ALL") params.set("round_code", filters.round_code);
+  if (filters.academic_year) params.set("academic_year", String(filters.academic_year));
+  if (filters.program_type) params.set("program_type", filters.program_type);
+  if (filters.institution_type) params.set("institution_type", filters.institution_type);
+  if (filters.include_special_rounds) params.set("include_special_rounds", "true");
+  params.set("limit", String(filters.limit ?? 50));
+  params.set("offset", String(filters.offset ?? 0));
+
+  const timeoutSignal = signal || createTimeoutSignal(DEFAULT_API_TIMEOUT_MS);
+  const response = await fetch(`${API_BASE_URL}/cutoffs?${params.toString()}`, {
+    signal: timeoutSignal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Cutoffs API error: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export interface CoverageSummary {
+  years_available: number[];
+  total_records: number;
+  published_records: number;
+  superseded_records: number;
+  records_per_year: Record<string, number>;
+  total_records_per_year: Record<string, number>;
+  records_per_round: Record<string, Record<string, number>>;
+  records_per_category: Record<string, number>;
+  records_per_program_type: Record<string, number>;
+  colleges_per_year: Record<string, number>;
+  branches_per_year: Record<string, number>;
+  observation_depth_counts: Record<string, number>;
+}
+
+export async function fetchAnalyticsCoverage(
+  signal?: AbortSignal
+): Promise<CoverageSummary> {
+  const timeoutSignal = signal || createTimeoutSignal(DEFAULT_API_TIMEOUT_MS);
+  const response = await fetch(`${API_BASE_URL}/analytics/coverage`, {
+    signal: timeoutSignal,
+  });
+  if (!response.ok) {
+    throw new Error(`Coverage API error: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export interface RoundProgressionMetric {
+  academic_year: number;
+  from_round: string;
+  to_round: string;
+  program_type: string;
+  category: string;
+  count: number;
+  mean_expansion: number;
+  median_expansion: number;
+  min_expansion: number;
+  max_expansion: number;
+}
+
+export async function fetchAnalyticsProgression(
+  params?: { academic_year?: number; category?: string; program_type?: string },
+  signal?: AbortSignal
+): Promise<RoundProgressionMetric[]> {
+  const query = new URLSearchParams();
+  if (params?.academic_year) query.set("academic_year", String(params.academic_year));
+  if (params?.category) query.set("category", params.category);
+  if (params?.program_type) query.set("program_type", params.program_type);
+
+  const timeoutSignal = signal || createTimeoutSignal(DEFAULT_API_TIMEOUT_MS);
+  const response = await fetch(`${API_BASE_URL}/analytics/progression?${query.toString()}`, {
+    signal: timeoutSignal,
+  });
+  if (!response.ok) {
+    throw new Error(`Progression API error: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export interface PaginatedCollegesResponse {
+  items: Array<{
+    id: string;
+    code: string;
+    name: string;
+    original_name: string;
+    location: string | null;
+    institution_type: string;
+  }>;
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export async function fetchCollegesPaginated(
+  params: { query?: string; location?: string; institution_type?: string; limit?: number; offset?: number } = {},
+  signal?: AbortSignal
+): Promise<PaginatedCollegesResponse> {
+  const q = new URLSearchParams();
+  if (params.query) q.set("query", params.query);
+  if (params.location && params.location !== "All") q.set("location", params.location);
+  if (params.institution_type && params.institution_type !== "ALL") q.set("institution_type", params.institution_type);
+  q.set("limit", String(params.limit ?? 50));
+  q.set("offset", String(params.offset ?? 0));
+
+  const timeoutSignal = signal || createTimeoutSignal(DEFAULT_API_TIMEOUT_MS);
+  const response = await fetch(`${API_BASE_URL}/colleges?${q.toString()}`, {
+    signal: timeoutSignal,
+  });
+  if (!response.ok) {
+    throw new Error(`Colleges API error: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export interface CollegeDetailResponse {
+  id: string;
+  code: string;
+  name: string;
+  original_name: string;
+  location: string | null;
+  institution_type: string;
+  aliases: Array<{ id: string; alias_name: string; alias_type: string }>;
+}
+
+export async function fetchCollegeById(
+  id: string,
+  signal?: AbortSignal
+): Promise<CollegeDetailResponse> {
+  const timeoutSignal = signal || createTimeoutSignal(DEFAULT_API_TIMEOUT_MS);
+  const response = await fetch(`${API_BASE_URL}/colleges/${id}`, {
+    signal: timeoutSignal,
+  });
+  if (!response.ok) {
+    throw new Error(`College API error (${response.status}): ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export interface FeeItem {
+  id: string;
+  college_id: string;
+  branch_id: string;
+  academic_year: number;
+  total_fee: number;
+  tuition_fee: number;
+  other_fee: number;
+  currency: string;
+  status: string;
+}
+
+export async function fetchFees(
+  params: { college_id?: string; branch_id?: string; academic_year?: number; limit?: number; offset?: number } = {},
+  signal?: AbortSignal
+): Promise<{ items: FeeItem[]; total: number; limit: number; offset: number }> {
+  const q = new URLSearchParams();
+  if (params.college_id) q.set("college_id", params.college_id);
+  if (params.branch_id) q.set("branch_id", params.branch_id);
+  if (params.academic_year) q.set("academic_year", String(params.academic_year));
+  q.set("limit", String(params.limit ?? 50));
+  q.set("offset", String(params.offset ?? 0));
+
+  const timeoutSignal = signal || createTimeoutSignal(DEFAULT_API_TIMEOUT_MS);
+  const response = await fetch(`${API_BASE_URL}/fees?${q.toString()}`, {
+    signal: timeoutSignal,
+  });
+  if (!response.ok) {
+    throw new Error(`Fees API error: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export const CANONICAL_ROUND_NAMES: Record<string, { code: string; name: string }> = {
+  '78f87192-5386-4df6-a54b-e5e57fb712d8': { code: 'MOCK', name: 'Mock Round' },
+  'ff3c19b5-027b-4449-897c-ef8ae4ae5af8': { code: 'R1', name: 'Round 1' },
+  '38004d93-2b40-4dec-bb90-edafb172cb53': { code: 'R3', name: 'Round 3' },
+  '78c58b8f-b542-4bd1-864a-e40f97b836dd': { code: 'R4', name: 'Round 4' },
+  'd1642b1f-cb0c-4cfa-9427-ec536a50a9ff': { code: 'KKR_SPECIAL', name: 'Round 2 KKR Special' },
+  '2b4697cc-7a1f-4792-a6a1-5651fd3d804a': { code: 'KKR_SPECIAL', name: 'Round 2 KKR Special' },
+  '39549ee6-e728-4cb6-b4a6-ca9a497cb531': { code: 'MOCK', name: 'Mock Round' },
+  '196e6bd1-3882-4ad9-ade9-1e48261d7136': { code: 'R1', name: 'Round 1' },
+  'fb8806ed-1882-446f-aa6e-ef977d0a1301': { code: 'R3', name: 'Round 3' },
+  '96ff6480-2d9a-418b-b10e-852f2a843cf3': { code: 'R4', name: 'Round 4' },
+  '921b4ecd-dc98-4a19-8839-19eaa9dcb1cc': { code: 'MOCK', name: 'Mock Round' },
+  'c3ff3c33-d177-40b8-8c29-1e8c53fee5f2': { code: 'R1', name: 'Round 1' },
+  '8df78fb6-cb22-403a-a692-055eba716c71': { code: 'KKR_SPECIAL', name: 'Round 2 Phase 1 KKR Special' },
+  '34c8db58-815f-4c24-b2c0-135006e15f53': { code: 'R2_PHASE2', name: 'Round 2 Phase 2' },
+  '3504bb6f-cd2e-409e-a6fe-dcebba30e2bd': { code: 'R3', name: 'Round 3' },
+  '17f92449-84b8-4360-97db-b3d2d0f9fca6': { code: 'MOCK', name: 'Mock Round' },
+  '9c23bce8-2246-43d7-8525-61880169ac82': { code: 'R1', name: 'Round 1' },
+  '19e9d5a2-6c8e-4456-bf9a-7c17907b0772': { code: 'KKR_SPECIAL', name: 'Round 2 Phase 1 KKR Special' },
+  '7389bbf3-8b7d-4b70-89d0-a7c93ccbd42c': { code: 'R2_PHASE2', name: 'Round 2 Phase 2' },
+  '750afbff-9b68-452f-90c4-9fd13effe1f8': { code: 'R3', name: 'Round 3' },
+  '6ed62206-3e7b-43d2-aa4c-e33353a66bc9': { code: 'CONSOLIDATED_FINAL', name: 'Consolidated Final' },
+};
+
+export const CANONICAL_CATEGORY_NAMES: Record<string, string> = {
+  '9b3e9c4b-a84d-44b8-be1c-e4e98ec0ff19': 'GM',
+  '855fe321-1aa3-4d64-8d1b-570b39f5f80f': 'KKR',
+  'ef36472c-0902-4d4f-876d-cdb1c3d7624b': 'HKR',
+};

@@ -82,10 +82,10 @@ jobs:
 
       - name: Run frontend tests
         run: |
-          bun test
+          bun run test
 
       - name: Build frontend production bundle
         env:
-          VITE_API_BASE_URL: http://localhost:8000
+          VITE_API_BASE_URL: http://localhost:8000/api/v1
         run: |
           bun run build

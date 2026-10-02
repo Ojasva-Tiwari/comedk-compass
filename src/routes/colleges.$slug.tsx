@@ -1,12 +1,458 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { useState } from "react";
-import { AlertTriangle, ArrowLeft, BookmarkPlus, Check, GitCompareArrows, MapPin } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  AlertCircle,
+  AlertTriangle,
+  ArrowLeft,
+  BookmarkPlus,
+  CheckCircle2,
+  ChevronRight,
+  GitCompareArrows,
+  HelpCircle,
+  Info,
+  MapPin,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CollegeLogo } from "@/components/product/brand";
-import { DataNotice, ProbabilityTimeline, SourceBadge, SourcedMetric, TrendChart, VerificationBadge } from "@/components/product/data-ui";
-import { Panel, Section, SectionHeading } from "@/components/product/page";
-import { colleges, cutoffs, fees, getCollege, placements, rnsitTrends, studentSubmissions } from "@/lib/mock-data";
-export const Route=createFileRoute("/colleges/$slug")({loader:({params})=>{const college=getCollege(params.slug);if(!college)throw notFound();return{college}},head:({loaderData})=>({meta:[{title:loaderData?`${loaderData.college.name} — COMEDK Compass`:"College unavailable — COMEDK Compass"},{name:"description",content:loaderData?`Cutoffs, fees, placements and round probabilities for ${loaderData.college.name}.`:"College data is unavailable."},{property:"og:title",content:loaderData?.college.name??"College unavailable"},{property:"og:description",content:"COMEDK counselling data with clear sources and confidence."},{property:"og:type",content:"website"},{name:"twitter:card",content:"summary_large_image"}]}),component:CollegeDetail,notFoundComponent:()=> <Section><Panel className="p-10 text-center">College not found. <Link to="/colleges" className="text-primary">Browse colleges</Link></Panel></Section>});
-function CollegeDetail(){const {college}=Route.useLoaderData();const [rank,setRank]=useState(18432);const [metric,setMetric]=useState<"Closing"|"Opening">("Closing");const fee=fees.find(x=>x.collegeId===college.id);const placement=placements.find(x=>x.collegeId===college.id);const rows=cutoffs.filter(x=>x.collegeId===college.id);const submission=studentSubmissions.find(x=>x.collegeId===college.id);const base=rnsitTrends.CSE.map((v,i)=>Math.round(v*(college.latestCutoff/19120)*(metric==="Opening"?.72:1)-(i*80)));const isRankWithinBoundary=rank<=college.latestCutoff;return <><header className="border-b border-border bg-background"><Section className="py-9"><Link to="/colleges" className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground"><ArrowLeft className="size-3"/>All colleges</Link><div className="mt-6 flex flex-col gap-6 sm:flex-row sm:items-center"><CollegeLogo initials={college.accent} className="size-16 text-base"/><div className="flex-1"><div className="flex flex-wrap items-center gap-2"><h1 className="text-3xl font-semibold tracking-tight">{college.name}</h1>{college.verified&&<VerificationBadge/>}</div><p className="mt-2 flex items-center gap-1 text-sm text-muted-foreground"><MapPin className="size-3"/>{college.location} · Established {college.established}</p></div><div className="flex gap-2"><Button variant="outline" onClick={()=>toast.success("Added to your shortlist")}><BookmarkPlus/>Shortlist</Button><Button asChild><Link to="/compare"><GitCompareArrows/>Compare</Link></Button></div></div></Section></header><Section><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><SourcedMetric value={`₹${(college.medianPackage/100000).toFixed(1)} LPA`} label="Median package" meta={{source:"Institution Source",year:2025,confidence:"Moderate"}}/><SourcedMetric value={`₹${(college.annualFee/100000).toFixed(1)}L`} label="Annual fee" meta={{source:"Official COMEDK",year:2025,confidence:"High"}}/><SourcedMetric value={`₹${(college.hostelFee/100000).toFixed(1)}L`} label="Hostel estimate" meta={{source:"Verified Student",year:2025,verifiedCount:8}}/><SourcedMetric value={String(college.established)} label="Established" meta={{source:"Institution Source",year:2025}}/></div><div className="mt-14 grid gap-6 lg:grid-cols-[1.2fr_.8fr]"><Panel className="p-5"><div className="flex items-start justify-between"><div><p className="eyebrow">Cutoff trend</p><h2 className="mt-2 text-xl font-semibold">CSE rank movement</h2></div><div className="flex rounded-md bg-muted p-1">{(["Opening","Closing"] as const).map(x=><button key={x} onClick={()=>setMetric(x)} className={`rounded px-3 py-1.5 text-xs ${metric===x?"bg-card shadow-xs":"text-muted-foreground"}`}>{x}</button>)}</div></div><TrendChart values={base}/><SourceBadge meta={{source:"Official COMEDK",year:2025,confidence:"High"}}/></Panel><Panel className="p-5 flex flex-col justify-between"><div className="space-y-3"><div className="flex items-center justify-between"><span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">Estimated Cutoff</span><span className="font-mono text-xs text-muted-foreground">CSE · GM</span></div><h2 className="text-xl font-semibold">Estimated Closing Rank</h2><div className="mt-2 flex items-baseline gap-2"><span className="font-mono text-3xl font-semibold text-foreground">{college.latestCutoff.toLocaleString("en-IN")}</span><span className="text-xs text-muted-foreground">Official benchmark</span></div><label className="mt-4 block text-xs text-muted-foreground">Test your rank against cutoff boundary<Input value={rank} type="number" onChange={e=>setRank(Number(e.target.value))} className="mt-1 font-mono"/></label><div className="mt-3 rounded-md border border-border bg-muted/40 p-3 text-xs">{isRankWithinBoundary?<p className="text-foreground">Your rank ({rank.toLocaleString("en-IN")}) is <strong>numerically within</strong> this cutoff boundary ({college.latestCutoff.toLocaleString("en-IN")}).</p>:<p className="text-muted-foreground">Your rank ({rank.toLocaleString("en-IN")}) is <strong>above</strong> this cutoff boundary ({college.latestCutoff.toLocaleString("en-IN")}).</p>}</div></div><div className="mt-5 border-t border-border pt-4 flex items-center justify-between"><span className="text-[11px] text-muted-foreground">Evidence-based decision analysis · No guarantees</span><Button size="sm" variant="outline" asChild><Link to="/predictor" search={{ rank: rank || undefined, collegeId: college.id }}>Analyze with my rank →</Link></Button></div></Panel></div><SectionHeading eyebrow="Branch cutoffs" title="Round-by-round closing ranks"/><div className="overflow-x-auto rounded-lg border border-border bg-card"><table className="w-full min-w-[680px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Branch","Round 1","Round 2","Round 3","Round 4","Trend"].map(x=><th className="px-4 py-3 font-medium" key={x}>{x}</th>)}</tr></thead><tbody>{(rows.length?rows:[{branch:"CSE",rounds:[Math.round(college.latestCutoff*.65),Math.round(college.latestCutoff*.78),Math.round(college.latestCutoff*.91),college.latestCutoff]}]).map((r,i)=><tr className="border-t border-border" key={i}><td className="px-4 py-4 font-semibold">{r.branch}</td>{r.rounds.map(v=><td className="px-4 py-4 font-mono" key={v}>{v.toLocaleString("en-IN")}</td>)}<td className="px-4 py-4 text-positive">Improving</td></tr>)}</tbody></table></div><div className="mt-14 grid gap-6 lg:grid-cols-2"><Panel className="p-6"><p className="eyebrow">Estimated annual cost</p><div className="mt-6 space-y-4">{[["College fee",fee?.tuition],["Hostel",fee?.hostel],["Other fees",fee?.other]].map(([l,v])=><div className="flex justify-between border-b border-border pb-3" key={String(l)}><span className="text-sm text-muted-foreground">{l}</span><strong>₹{Number(v??0).toLocaleString("en-IN")}</strong></div>)}<div className="flex justify-between"><strong>Estimated total</strong><strong className="text-primary">₹{((fee?.tuition??0)+(fee?.hostel??0)+(fee?.other??0)).toLocaleString("en-IN")}</strong></div></div>{fee&&<div className="mt-5"><SourceBadge meta={fee.source}/></div>}</Panel><Panel className="p-6"><p className="eyebrow">Placements · 2025</p><div className="mt-6 grid grid-cols-3 gap-4"><SourcedMetric value={`₹${((placement?.median??0)/100000).toFixed(1)}L`} label="Median" meta={{source:"Institution Source",year:2025}}/><SourcedMetric value={`₹${((placement?.average??0)/100000).toFixed(1)}L`} label="Average" meta={{source:"Institution Source",year:2025}}/><SourcedMetric value={`₹${((placement?.highest??0)/100000).toFixed(1)}L`} label="Highest" meta={{source:"Institution Source",year:2025}}/></div></Panel></div><SectionHeading eyebrow="Verified student data" title="What students have confirmed"/><Panel className="p-6">{submission?<><div className="flex flex-wrap items-center justify-between gap-3"><div><strong>Batch {submission.batch} · {submission.branch}</strong><p className="mt-1 flex items-center gap-1 text-xs text-positive"><Check className="size-3"/>Confirmed by {submission.confirmedBy} students</p></div><VerificationBadge/></div><p className="mt-5 text-sm leading-relaxed text-muted-foreground">“{submission.note}”</p><div className="mt-5 flex items-start gap-2 rounded-md border border-warning/20 bg-warning/5 p-3"><AlertTriangle className="mt-0.5 size-4 text-warning"/><div className="text-xs"><strong>Data discrepancy</strong><p className="mt-1 text-muted-foreground">Official fee: ₹{(college.annualFee/100000).toFixed(1)}L · Student submissions: ₹{(submission.feeRange[0]/100000).toFixed(1)}L–₹{(submission.feeRange[1]/100000).toFixed(1)}L</p></div></div></>:<DataNotice>No verified student data yet. Be the first student to contribute.</DataNotice>}</Panel></Section></>}
+import { SourceBadge } from "@/components/product/data-ui";
+import { EmptyState, Panel, Section, SectionHeading } from "@/components/product/page";
+import {
+  CANONICAL_COLLEGES,
+  CANONICAL_ROUND_NAMES,
+  fetchCollegeById,
+  fetchCollegesPaginated,
+  fetchCutoffs,
+  fetchFees,
+} from "@/lib/api-client";
+
+interface ResolvedCollege {
+  id: string;
+  code: string;
+  name: string;
+  original_name: string;
+  location: string;
+  institution_type: string;
+  accent: string;
+}
+
+export const Route = createFileRoute("/colleges/$slug")({
+  loader: async ({ params }): Promise<{ college: ResolvedCollege }> => {
+    const slugOrId = params.slug;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slugOrId);
+
+    if (isUuid) {
+      try {
+        const data = await fetchCollegeById(slugOrId);
+        return {
+          college: {
+            id: data.id,
+            code: data.code,
+            name: data.name,
+            original_name: data.original_name,
+            location: data.location || "Karnataka",
+            institution_type: data.institution_type,
+            accent: data.code.slice(0, 2),
+          },
+        };
+      } catch {
+        // Fallback to checking canonical list
+      }
+    }
+
+    // Check canonical verified colleges
+    const canonical = CANONICAL_COLLEGES.find(
+      (c) =>
+        c.id.toLowerCase() === slugOrId.toLowerCase() ||
+        c.code.toLowerCase() === slugOrId.toLowerCase() ||
+        c.shortName.toLowerCase().includes(slugOrId.toLowerCase())
+    );
+    if (canonical) {
+      return {
+        college: {
+          id: canonical.id,
+          code: canonical.code,
+          name: canonical.name,
+          original_name: canonical.name,
+          location: canonical.location,
+          institution_type: "ENGINEERING",
+          accent: canonical.code.slice(0, 2),
+        },
+      };
+    }
+
+    // Attempt backend search by slug/code/query
+    try {
+      const res = await fetchCollegesPaginated({ query: slugOrId, limit: 1 });
+      if (res.items.length > 0) {
+        const item = res.items[0];
+        return {
+          college: {
+            id: item.id,
+            code: item.code,
+            name: item.name,
+            original_name: item.original_name,
+            location: item.location || "Karnataka",
+            institution_type: item.institution_type,
+            accent: item.code.slice(0, 2),
+          },
+        };
+      }
+    } catch {
+      // not found
+    }
+
+    throw notFound();
+  },
+  head: ({ loaderData }) => ({
+    meta: [
+      {
+        title: loaderData
+          ? `${loaderData.college.code} — ${loaderData.college.name} — COMEDK Compass`
+          : "College Not Found — COMEDK Compass",
+      },
+      {
+        name: "description",
+        content: loaderData
+          ? `Verified cutoffs, official fees, and counselling data for ${loaderData.college.name}.`
+          : "Verified COMEDK college data.",
+      },
+      { property: "og:title", content: loaderData?.college.name ?? "College Information" },
+      {
+        property: "og:description",
+        content: "Official COMEDK allotment closing ranks and published fee structure.",
+      },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
+  }),
+  component: CollegeDetail,
+  notFoundComponent: () => (
+    <Section>
+      <Panel className="p-10 text-center">
+        <p className="text-base font-semibold">College not found in verified database records.</p>
+        <Button className="mt-4" asChild variant="outline">
+          <Link to="/colleges">Browse College Directory</Link>
+        </Button>
+      </Panel>
+    </Section>
+  ),
+});
+
+function CollegeDetail() {
+  const { college } = Route.useLoaderData();
+  const [candidateRank, setCandidateRank] = useState<number>(18432);
+
+  // 1. Fetch verified fee records from backend
+  const { data: feesData, isLoading: feesLoading } = useQuery({
+    queryKey: ["college-fees", college.id],
+    queryFn: () => fetchFees({ college_id: college.id, limit: 10 }),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // 2. Fetch verified cutoff records from backend
+  const { data: cutoffsData, isLoading: cutoffsLoading } = useQuery({
+    queryKey: ["college-cutoffs", college.id],
+    queryFn: () => fetchCutoffs({ college_id: college.id, limit: 50 }),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const verifiedFees = feesData?.items ?? [];
+  const verifiedCutoffs = cutoffsData?.items ?? [];
+
+  // Lowest closing rank among published cutoffs for reference
+  const lowestCutoff = verifiedCutoffs.length > 0
+    ? Math.min(...verifiedCutoffs.map((c) => c.closing_rank))
+    : null;
+
+  const isRankWithinBoundary = lowestCutoff !== null ? candidateRank <= lowestCutoff : null;
+
+  return (
+    <>
+      <header className="border-b border-border bg-background">
+        <Section className="py-8">
+          <Link
+            to="/colleges"
+            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="size-3" /> College Directory
+          </Link>
+
+          <div className="mt-5 flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-4">
+              <CollegeLogo initials={college.accent} className="size-16 text-lg" />
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold text-primary">
+                    {college.code}
+                  </span>
+                  <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+                    {college.name}
+                  </h1>
+                </div>
+                <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <MapPin className="size-3.5" />
+                  <span>{college.location}</span>
+                  <span className="text-border">·</span>
+                  <span>{college.institution_type}</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => toast.success(`Saved ${college.code} to your shortlist`)}
+              >
+                <BookmarkPlus className="size-4" /> Shortlist
+              </Button>
+              <Button asChild size="sm">
+                <Link to="/compare" search={{ colleges: college.id }}>
+                  <GitCompareArrows className="size-4" /> Compare
+                </Link>
+              </Button>
+            </div>
+          </div>
+        </Section>
+      </header>
+
+      <Section>
+        {/* Metric Cards from verified database records */}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Panel className="p-5">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Official Institution Code
+            </span>
+            <strong className="mt-2 block font-mono text-2xl font-bold text-foreground">
+              {college.code}
+            </strong>
+            <span className="text-[11px] text-muted-foreground">Official COMEDK code</span>
+          </Panel>
+
+          <Panel className="p-5">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Official Annual Tuition Fee
+            </span>
+            <strong className="mt-2 block font-mono text-2xl font-bold text-foreground">
+              {feesLoading
+                ? "..."
+                : verifiedFees.length > 0 && verifiedFees[0].tuition_fee
+                ? `₹${Number(verifiedFees[0].tuition_fee).toLocaleString("en-IN")}`
+                : "Official Circular"}
+            </strong>
+            <span className="text-[11px] text-muted-foreground">From published fee circulars</span>
+          </Panel>
+
+          <Panel className="p-5">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Verified Cutoff Records
+            </span>
+            <strong className="mt-2 block font-mono text-2xl font-bold text-foreground">
+              {cutoffsLoading ? "..." : verifiedCutoffs.length}
+            </strong>
+            <span className="text-[11px] text-muted-foreground">Observed allotment points</span>
+          </Panel>
+
+          <Panel className="p-5">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Institution Category
+            </span>
+            <strong className="mt-2 block text-xl font-bold text-foreground">
+              {college.institution_type}
+            </strong>
+            <span className="text-[11px] text-muted-foreground">Karnataka state allotment</span>
+          </Panel>
+        </div>
+
+        {/* Candidate Rank Positioning vs Official Cutoffs */}
+        <div className="mt-10 grid gap-6 lg:grid-cols-[1.2fr_.8fr]">
+          {/* Real Cutoff Table */}
+          <Panel className="p-6">
+            <div className="flex items-center justify-between border-b border-border pb-4">
+              <div>
+                <p className="eyebrow">Verified Allotment Cutoffs</p>
+                <h2 className="mt-1 text-lg font-semibold text-foreground">
+                  Published Closing Ranks
+                </h2>
+              </div>
+              <SourceBadge meta={{ source: "Official COMEDK", year: 2026, confidence: "High" }} />
+            </div>
+
+            {cutoffsLoading ? (
+              <p className="py-8 text-center text-xs text-muted-foreground">Loading verified cutoff records...</p>
+            ) : verifiedCutoffs.length === 0 ? (
+              <p className="py-8 text-center text-xs text-muted-foreground">
+                No published cutoff records found for this institution.
+              </p>
+            ) : (
+              <div className="mt-4 max-h-80 overflow-y-auto overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-muted/60 text-[10px] uppercase text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2">Year</th>
+                      <th className="px-3 py-2">Round</th>
+                      <th className="px-3 py-2">Category</th>
+                      <th className="px-3 py-2 text-right">Closing Rank</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {verifiedCutoffs.slice(0, 15).map((c) => (
+                      <tr key={c.id}>
+                        <td className="px-3 py-2.5 font-medium">{c.academic_year}</td>
+                        <td className="px-3 py-2.5">
+                          {CANONICAL_ROUND_NAMES[c.round_id]?.name || "Official Round"}
+                        </td>
+                        <td className="px-3 py-2.5">GM</td>
+                        <td className="px-3 py-2.5 text-right font-mono font-semibold text-foreground">
+                          {c.closing_rank.toLocaleString("en-IN")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+
+          {/* Test Candidate Rank Form */}
+          <Panel className="flex flex-col justify-between p-6">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+                  Decision Layer
+                </span>
+                <span className="text-[11px] text-muted-foreground">Non-speculative</span>
+              </div>
+
+              <h2 className="text-lg font-semibold text-foreground">
+                Evaluate Your Rank
+              </h2>
+
+              <label className="block text-xs text-muted-foreground">
+                Enter your COMEDK rank:
+                <Input
+                  type="number"
+                  value={candidateRank}
+                  onChange={(e) => setCandidateRank(Number(e.target.value))}
+                  className="mt-1 font-mono text-base"
+                />
+              </label>
+
+              {lowestCutoff !== null && (
+                <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
+                  {isRankWithinBoundary ? (
+                    <p className="text-foreground">
+                      Your rank (<strong className="font-mono">{candidateRank.toLocaleString("en-IN")}</strong>) is{" "}
+                      <strong className="text-positive">numerically within</strong> this college's strictest historical cutoff boundary (
+                      <strong className="font-mono">{lowestCutoff.toLocaleString("en-IN")}</strong>).
+                    </p>
+                  ) : (
+                    <p>
+                      Your rank (<strong className="font-mono">{candidateRank.toLocaleString("en-IN")}</strong>) is{" "}
+                      numerically beyond the strictest historical cutoff (
+                      <strong className="font-mono">{lowestCutoff.toLocaleString("en-IN")}</strong>). Check subsequent rounds or allied branches.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 border-t border-border pt-4">
+              <Button asChild className="w-full gap-2">
+                <Link
+                  to="/predictor"
+                  search={{
+                    collegeId: college.id,
+                    rank: candidateRank,
+                    round: "R1",
+                    category: "GM",
+                  }}
+                >
+                  <Sparkles className="size-4" /> Full Interval Prediction →
+                </Link>
+              </Button>
+            </div>
+          </Panel>
+        </div>
+
+        {/* Factual Fee Section from Backend */}
+        <div className="mt-10">
+          <SectionHeading
+            eyebrow="Official Fees"
+            title="Published COMEDK Tuition & College Fees"
+            description="Fee amounts extracted from published COMEDK seat allocation circulars. Hostel fees vary by institution."
+          />
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Panel className="p-6">
+              <p className="eyebrow">Verified Fee Schedule</p>
+              {feesLoading ? (
+                <p className="mt-4 text-xs text-muted-foreground">Loading fee records...</p>
+              ) : verifiedFees.length === 0 ? (
+                <p className="mt-4 text-xs text-muted-foreground">
+                  Official fee records not cataloged for this institution.
+                </p>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  {verifiedFees.slice(0, 3).map((f) => (
+                    <div key={f.id} className="flex items-center justify-between border-b border-border pb-2 text-xs">
+                      <div>
+                        <span className="font-semibold text-foreground">Academic Year {f.academic_year}</span>
+                        <p className="text-[11px] text-muted-foreground">Tuition Fee</p>
+                      </div>
+                      <div className="font-mono text-sm font-semibold text-foreground">
+                        ₹{Number(f.tuition_fee || f.total_fee).toLocaleString("en-IN")}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="mt-3 flex items-start gap-2 text-[11px] text-muted-foreground">
+                    <Info className="size-3.5 shrink-0 text-primary" />
+                    <span>Hostel and transport fees are determined independently by college management.</span>
+                  </div>
+                </div>
+              )}
+            </Panel>
+
+            <Panel className="p-6">
+              <p className="eyebrow">Placements Data Disclosure</p>
+              <div className="mt-4 rounded-lg border border-border bg-muted/20 p-4 text-xs leading-relaxed text-muted-foreground">
+                <div className="flex items-center gap-2 font-semibold text-foreground">
+                  <HelpCircle className="size-4 text-muted-foreground" />
+                  <span>Official Policy Notice</span>
+                </div>
+                <p className="mt-2">
+                  COMEDK does not audit, compile, or publish institutional placement statistics (average/highest packages) in counselling notifications.
+                  To avoid misleading students with fabricated salary figures, COMEDK Compass does not publish unverified placement claims.
+                </p>
+                <p className="mt-2">
+                  Please consult individual institution NIRF documentation or autonomous audit reports directly.
+                </p>
+              </div>
+            </Panel>
+          </div>
+        </div>
+
+        {/* Student Reviews Status */}
+        <div className="mt-10">
+          <SectionHeading
+            eyebrow="Community Submissions"
+            title="Verified Student Data"
+            description="Independent campus reports submitted by enrolled students."
+          />
+          <Panel className="p-6 text-center text-xs text-muted-foreground">
+            <CheckCircle2 className="mx-auto size-6 text-muted-foreground/60" />
+            <p className="mt-2 font-medium text-foreground">No student reviews recorded yet</p>
+            <p className="mt-1">
+              Currently displaying official COMEDK allotment cutoffs and regulatory fee circulars only.
+            </p>
+          </Panel>
+        </div>
+      </Section>
+    </>
+  );
+}

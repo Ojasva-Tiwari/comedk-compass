@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useId, useMemo } from "react";
+import { useState, useId, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Building2,
@@ -89,11 +89,22 @@ function PredictorPage() {
   const roundSelectId = useId();
   const categorySelectId = useId();
 
+  const resolvedCollegeId = useMemo(() => {
+    if (!searchParams.collegeId) return undefined;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(searchParams.collegeId);
+    if (isUuid) return searchParams.collegeId;
+    const canonicalMatch = CANONICAL_COLLEGES.find(
+      (c) => c.id === searchParams.collegeId || c.code.toLowerCase() === searchParams.collegeId?.toLowerCase()
+    );
+    if (canonicalMatch) return canonicalMatch.id;
+    return searchParams.collegeId;
+  }, [searchParams.collegeId]);
+
   // Control state
   const [programType, setProgramType] = useState<"ENGINEERING" | "ARCHITECTURE">("ENGINEERING");
   const [academicYear, setAcademicYear] = useState<number>(2026);
   const [collegeId, setCollegeId] = useState<string>(
-    searchParams.collegeId || "39dd12af-12d8-445b-8a5d-66d22792a361" // RVCE default
+    resolvedCollegeId || "39dd12af-12d8-445b-8a5d-66d22792a361" // RVCE default
   );
   const [branchId, setBranchId] = useState<string>(
     searchParams.branchId || "f764a302-c117-41bb-bbd3-e2b998012107" // CS default
@@ -111,6 +122,18 @@ function PredictorPage() {
       ? searchParams.rank.toLocaleString("en-IN")
       : "18,432"
   );
+
+  useEffect(() => {
+    if (resolvedCollegeId) {
+      setCollegeId(resolvedCollegeId);
+    }
+  }, [resolvedCollegeId]);
+
+  useEffect(() => {
+    if (searchParams.rank && searchParams.rank > 0) {
+      setCandidateRankInput(searchParams.rank.toLocaleString("en-IN"));
+    }
+  }, [searchParams.rank]);
 
   // Dynamic College & Branch Catalogs
   const { data: colleges = CANONICAL_COLLEGES } = useQuery({
@@ -153,6 +176,14 @@ function PredictorPage() {
   const cleanedRankInput = candidateRankInput.trim().replace(/,/g, "");
   const isPositiveInteger = /^\d+$/.test(cleanedRankInput) && parseInt(cleanedRankInput, 10) > 0;
   const parsedRank = isPositiveInteger ? parseInt(cleanedRankInput, 10) : null;
+
+  const selectedCollege = useMemo(() => {
+    return colleges.find((c) => c.id === collegeId) || CANONICAL_COLLEGES.find((c) => c.id === collegeId);
+  }, [colleges, collegeId]);
+
+  const selectedBranch = useMemo(() => {
+    return availableBranches.find((b) => b.id === branchId) || CANONICAL_BRANCHES.find((b) => b.id === branchId);
+  }, [availableBranches, branchId]);
 
   let rankError: string | null = null;
   if (candidateRankInput.trim().length > 0 && !isPositiveInteger) {
@@ -384,7 +415,7 @@ function PredictorPage() {
                 </Label>
                 <Select value={collegeId} onValueChange={setCollegeId}>
                   <SelectTrigger id={collegeSelectId} className="w-full truncate text-left">
-                    <SelectValue />
+                    <SelectValue placeholder={selectedCollege ? `${selectedCollege.code}: ${selectedCollege.shortName}` : "Select college"} />
                   </SelectTrigger>
                   <SelectContent className="max-h-72">
                     {colleges.map((c) => (
@@ -404,7 +435,7 @@ function PredictorPage() {
                 </Label>
                 <Select value={branchId} onValueChange={setBranchId}>
                   <SelectTrigger id={branchSelectId} className="w-full text-left truncate">
-                    <SelectValue />
+                    <SelectValue placeholder={selectedBranch ? `${selectedBranch.code}: ${selectedBranch.name}` : "Select branch"} />
                   </SelectTrigger>
                   <SelectContent className="max-h-72">
                     {availableBranches.map((b) => (

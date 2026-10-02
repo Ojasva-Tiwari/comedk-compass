@@ -6,7 +6,8 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Toaster } from "@/components/ui/sonner";
-import { colleges } from "@/lib/mock-data";
+import { useQuery } from "@tanstack/react-query";
+import { fetchColleges, CollegeOption } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { CompassMark } from "./brand";
 
@@ -23,4 +24,75 @@ export function AppShell({ children }: { children: ReactNode }) {
  return <div className="min-h-screen bg-background text-foreground"><header className="sticky top-0 z-40 border-b border-border/70 bg-background/92 backdrop-blur-md"><div className="mx-auto flex h-16 max-w-[1440px] items-center gap-6 px-4 lg:px-8"><Link to="/" className="flex shrink-0 items-center gap-2.5 font-semibold"><CompassMark/><span className="hidden sm:inline">COMEDK Compass</span></Link><nav className="hidden items-center gap-1 lg:flex">{links.map(item=><Link key={item.to} to={item.to} activeOptions={{exact:item.to==="/"}} className="rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" activeProps={{className:"bg-muted text-foreground"}}>{item.label}</Link>)}</nav><div className="ml-auto flex items-center gap-2"><Button variant="outline" className="hidden w-48 justify-between text-muted-foreground sm:flex" onClick={()=>setSearchOpen(true)}><span className="flex items-center gap-2"><Search/>Search</span><kbd className="font-mono text-[10px]">⌘ K</kbd></Button><Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle color theme">{dark?<Sun/>:<Moon/>}</Button><Link to="/dashboard" className="hidden rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition-transform active:scale-[.98] md:block">My profile</Link><Button variant="ghost" size="icon" className="lg:hidden" onClick={()=>setMenuOpen(!menuOpen)} aria-label="Toggle navigation">{menuOpen?<X/>:<Menu/>}</Button></div></div>{menuOpen&&<nav className="border-t border-border bg-background p-3 lg:hidden">{links.map(item=><Link key={item.to} to={item.to} onClick={()=>setMenuOpen(false)} className="flex items-center gap-3 rounded-md px-3 py-3 text-sm text-muted-foreground" activeProps={{className:"bg-muted text-foreground"}}><item.icon className="size-4"/>{item.label}</Link>)}</nav>}</header><main className={cn("pb-20 md:pb-0",pathname!=="/"&&"bg-grid")}>{children}</main><MobileNav onSearch={()=>setSearchOpen(true)}/><CommandPalette open={searchOpen} onOpenChange={setSearchOpen}/><Toaster position="bottom-right"/></div>;
 }
 function MobileNav({onSearch}:{onSearch:()=>void}) { const items=[links[0],links[1],links[2],{label:"My list",to:"/preference-list",icon:ListOrdered}] as const; return <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-border bg-background/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">{items.map(item=><Link key={item.to} to={item.to} activeOptions={{exact:item.to==="/"}} className="flex h-16 flex-col items-center justify-center gap-1 text-[10px] text-muted-foreground" activeProps={{className:"text-primary"}}><item.icon className="size-4"/>{item.label}</Link>)}<button onClick={onSearch} className="flex h-16 flex-col items-center justify-center gap-1 text-[10px] text-muted-foreground"><Search className="size-4"/>Search</button></nav>; }
-function CommandPalette({open,onOpenChange}:{open:boolean;onOpenChange:(open:boolean)=>void}) { const [query,setQuery]=useState(""); const navigate=useNavigate(); const results=useMemo(()=>colleges.filter(c=>(c.name+c.shortName+c.branches.join(" ")).toLowerCase().includes(query.toLowerCase())).slice(0,5),[query]); const go=(to:"/"|"/predictor"|"/colleges"|"/cutoffs"|"/compare"|"/counselling"|"/dashboard"|"/preference-list")=>{onOpenChange(false);navigate({to});}; return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="top-[15%] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl"><DialogTitle className="sr-only">Search COMEDK Compass</DialogTitle><div className="flex items-center gap-3 border-b border-border px-4"><Search className="size-4 text-muted-foreground"/><Input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search colleges, branches, cutoffs, pages…" className="h-14 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"/></div><div className="max-h-96 overflow-y-auto p-2"><p className="px-2 py-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{query?"College results":"Quick navigation"}</p>{!query?links.map(item=><button key={item.to} onClick={()=>go(item.to)} className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm hover:bg-muted"><item.icon className="size-4 text-muted-foreground"/>{item.label}</button>):results.map(college=><button key={college.id} onClick={()=>{onOpenChange(false);navigate({to:"/colleges/$slug",params:{slug:college.slug}})}} className="flex w-full items-center justify-between rounded-md px-3 py-3 text-left hover:bg-muted"><span><strong className="block text-sm">{college.name}</strong><span className="text-xs text-muted-foreground">{college.branches.join(" · ")}</span></span><span className="font-mono text-xs text-muted-foreground">{college.latestCutoff.toLocaleString("en-IN")}</span></button>)}{query&&results.length===0&&<p className="p-8 text-center text-sm text-muted-foreground">No colleges or branches found.</p>}</div></DialogContent></Dialog>; }
+function CommandPalette({open,onOpenChange}:{open:boolean;onOpenChange:(open:boolean)=>void}) {
+  const [query,setQuery]=useState("");
+  const navigate=useNavigate();
+  const { data: colleges = [] } = useQuery({
+    queryKey: ["command-palette-colleges", query],
+    queryFn: () => fetchColleges(query),
+    enabled: open,
+    staleTime: 60_000,
+  });
+  const results = colleges.slice(0, 5);
+  const go=(to:"/"|"/predictor"|"/colleges"|"/cutoffs"|"/compare"|"/counselling"|"/dashboard"|"/preference-list")=>{
+    onOpenChange(false);
+    navigate({to});
+  };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="top-[15%] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl">
+        <DialogTitle className="sr-only">Search COMEDK Compass</DialogTitle>
+        <div className="flex items-center gap-3 border-b border-border px-4">
+          <Search className="size-4 text-muted-foreground"/>
+          <Input
+            autoFocus
+            value={query}
+            onChange={e=>setQuery(e.target.value)}
+            placeholder="Search colleges, codes, cities, pages…"
+            className="h-14 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+          />
+        </div>
+        <div className="max-h-96 overflow-y-auto p-2">
+          <p className="px-2 py-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            {query ? "College results" : "Quick navigation"}
+          </p>
+          {!query ? (
+            links.map(item => (
+              <button
+                key={item.to}
+                onClick={()=>go(item.to)}
+                className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm hover:bg-muted"
+              >
+                <item.icon className="size-4 text-muted-foreground"/>
+                {item.label}
+              </button>
+            ))
+          ) : (
+            results.map((college: CollegeOption) => (
+              <button
+                key={college.id}
+                onClick={() => {
+                  onOpenChange(false);
+                  navigate({
+                    to: "/colleges/$slug",
+                    params: { slug: college.code.toLowerCase() }
+                  });
+                }}
+                className="flex w-full items-center justify-between rounded-md px-3 py-3 text-left hover:bg-muted"
+              >
+                <span>
+                  <strong className="block text-sm">{college.name}</strong>
+                  <span className="text-xs text-muted-foreground">{college.code} · {college.location}</span>
+                </span>
+                <span className="font-mono text-xs text-muted-foreground">View details →</span>
+              </button>
+            ))
+          )}
+          {query && results.length === 0 && (
+            <p className="p-8 text-center text-sm text-muted-foreground">No matching colleges found.</p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
