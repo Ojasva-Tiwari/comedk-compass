@@ -524,10 +524,11 @@ class IngestionPipeline:
         # Ensure reference data exists
         cat_map, round_map = self._seed_base_reference_data()
 
-        local_path = Path(sv.local_path)
+        norm_path = Path(str(sv.local_path).replace("\\", "/"))
+        local_path = norm_path
         if not local_path.is_absolute():
             for base in (Path.cwd(), Path(__file__).resolve().parents[3], getattr(settings, "RAW_DATA_DIR", Path.cwd()).parent.parent.parent):
-                cand = base / local_path
+                cand = base / norm_path
                 if cand.exists():
                     local_path = cand
                     break

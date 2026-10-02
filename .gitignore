@@ -46,4 +46,9 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
-data/raw/
+# Raw data archive (ignored by default; only canonical test fixtures tracked)
+data/raw/**
+!data/raw/
+!data/raw/**/
+!data/raw/comedk/2026/cutoff/2025-Engineering_Cut-Off_Ranks-After-All-Rounds._Notified-on-07.07.2026.pdf
+!data/raw/comedk/comedk/2024/cutoff/Round1_Cutoff_Ranks_after_Engineering_Allotment_Notified_on_12_07_2024.pdf

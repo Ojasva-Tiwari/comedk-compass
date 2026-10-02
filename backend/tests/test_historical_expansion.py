@@ -13,9 +13,12 @@ Verifies:
 """
 
 import hashlib
+import uuid
 from pathlib import Path
 import pytest
 from sqlalchemy import select, func
+
+HISTORICAL_2024_SV_ID = uuid.UUID("f0628231-76c2-4ab2-b92a-0e2a3a6b2329")
 
 from backend.app.models.round import CounsellingRound
 from backend.app.models.seat import SeatRecord
@@ -181,10 +184,11 @@ def test_source_immutability_and_provenance(db):
     checked = 0
     for sv in source_versions:
         assert len(sv.content_hash) == 64, f"SourceVersion {sv.id} must have 64-char SHA-256"
-        file_path = Path(sv.local_path)
+        norm_path = Path(str(sv.local_path).replace("\\", "/"))
+        file_path = norm_path
         if not file_path.is_absolute():
             for base in (Path.cwd(), Path(__file__).resolve().parents[2]):
-                cand = base / file_path
+                cand = base / norm_path
                 if cand.exists():
                     file_path = cand
                     break
@@ -259,7 +263,7 @@ def test_existing_2025_and_2026_data_preservation(db):
 
 def test_idempotent_reingestion_historical(db):
     """Verify that re-processing an existing published historical document is strictly idempotent."""
-    # Find a published 2024 Cutoff SourceVersion
+    # Find a published 2024 Cutoff SourceVersion (prioritize canonical Round 1 fixture)
     sv = db.execute(
         select(SourceVersion)
         .where(
@@ -267,6 +271,7 @@ def test_idempotent_reingestion_historical(db):
             SourceVersion.document_type == DocumentType.CUTOFF_PDF.value,
             SourceVersion.processing_status == RecordStatus.PUBLISHED.value,
         )
+        .order_by((SourceVersion.id == HISTORICAL_2024_SV_ID).desc())
     ).scalars().first()
     assert sv is not None
 
