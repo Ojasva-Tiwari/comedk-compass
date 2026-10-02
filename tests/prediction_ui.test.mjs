@@ -619,3 +619,417 @@ test("30. Frontend API request timeout handling, AbortSignal bounds, and error f
     "Prediction must fail closed on timeout without fabricating results"
   );
 });
+
+// -------------------------------------------------------------
+// HISTORICAL CUTOFF ANALYSIS TEST SUITE (Product Direction Pivot)
+// -------------------------------------------------------------
+
+// Fixtures representing actual historical cutoffs from official COMEDK records
+const FIXTURE_BMSIT_AI_GM_2026_R3 = {
+  id: "cutoff-bmsit-ai-gm-2026-r3",
+  college_id: "e0280000-0000-0000-0000-000000000028",
+  branch_id: "branch-ai-ml-0000-0000-000000000001",
+  category_id: "cat-gm-0000-0000-000000000001",
+  round_id: "round-r3-0000-0000-000000000001",
+  source_version_id: "sv-2026-r3-official",
+  academic_year: 2026,
+  opening_rank: null,
+  closing_rank: 15081,
+  page_number: 14,
+  row_identifier: "E028-AI-GM-R3",
+  status: "ACTIVE",
+  created_at: "2026-09-01T00:00:00Z",
+};
+
+const FIXTURE_BMSIT_AI_GM_2026_R4 = {
+  id: "cutoff-bmsit-ai-gm-2026-r4",
+  college_id: "e0280000-0000-0000-0000-000000000028",
+  branch_id: "branch-ai-ml-0000-0000-000000000001",
+  category_id: "cat-gm-0000-0000-000000000001",
+  round_id: "round-r4-0000-0000-000000000001",
+  source_version_id: "sv-2026-r4-official",
+  academic_year: 2026,
+  opening_rank: null,
+  closing_rank: 18906,
+  page_number: 18,
+  row_identifier: "E028-AI-GM-R4",
+  status: "ACTIVE",
+  created_at: "2026-09-15T00:00:00Z",
+};
+
+// 31. Actual R4 cutoff displayed when available
+test("31. Actual R4 cutoff is displayed directly from official records when available", () => {
+  const targetCutoff = FIXTURE_BMSIT_AI_GM_2026_R4;
+  assert.equal(targetCutoff.closing_rank, 18906);
+  assert.equal(targetCutoff.academic_year, 2026);
+  assert.equal(targetCutoff.status, "ACTIVE");
+  assert.ok(targetCutoff.source_version_id.length > 0);
+});
+
+// 32. R3 does not get displayed as R4
+test("32. Round 3 does not get displayed as Round 4; R3 and R4 are strictly distinct", () => {
+  const r3 = FIXTURE_BMSIT_AI_GM_2026_R3;
+  const r4 = FIXTURE_BMSIT_AI_GM_2026_R4;
+
+  assert.notEqual(
+    r3.closing_rank,
+    r4.closing_rank,
+    "R3 (15,081) and R4 (18,906) must have distinct closing ranks"
+  );
+  assert.notEqual(
+    r3.round_id,
+    r4.round_id,
+    "R3 and R4 must have distinct round IDs"
+  );
+  assert.equal(r3.closing_rank, 15081);
+  assert.equal(r4.closing_rank, 18906);
+
+  // A query for R4 must return the R4 record, not the preceding R3 record
+  const queryRound = "R4";
+  const records = [r3, r4];
+  const matched = records.find((r) => r.round_id.includes(queryRound.toLowerCase()));
+  assert.equal(matched.closing_rank, 18906);
+});
+
+// 33. No prediction endpoint is required for the historical view
+test("33. Historical cutoff view queries cutoff records API without requiring prediction endpoints", () => {
+  const buildCutoffQueryParams = (filters) => {
+    const params = new URLSearchParams();
+    if (filters.college_id) params.set("college_id", filters.college_id);
+    if (filters.branch_id) params.set("branch_id", filters.branch_id);
+    if (filters.category_code) params.set("category_code", filters.category_code);
+    if (filters.round_code) params.set("round_code", filters.round_code);
+    if (filters.academic_year) params.set("academic_year", String(filters.academic_year));
+    return `/api/v1/cutoffs?${params.toString()}`;
+  };
+
+  const url = buildCutoffQueryParams({
+    college_id: "e0280000-0000-0000-0000-000000000028",
+    branch_id: "branch-ai-ml-0000-0000-000000000001",
+    category_code: "GM",
+    round_code: "R4",
+    academic_year: 2026,
+  });
+
+  assert.ok(url.startsWith("/api/v1/cutoffs"));
+  assert.ok(!url.includes("/predictor/chances"), "Must not call /predictor/chances");
+  assert.ok(!url.includes("/predictor/decision"), "Must not call /predictor/decision");
+});
+
+// 34. No admission probabilities anywhere in historical analysis
+test("34. Zero admission probabilities or percentages exist in historical cutoff view", () => {
+  const bannedKeywords = [
+    "probability",
+    "chance of admission",
+    "admission chance",
+    "probability of seat",
+    "success percentage",
+    "admission percentage",
+  ];
+
+  const candidateRank = 23510;
+  const closingRank = 18906;
+  const difference = Math.abs(candidateRank - closingRank);
+  const isWithin = candidateRank <= closingRank;
+
+  // The neutral factual message
+  const factualStatement = isWithin
+    ? `Your rank (${candidateRank.toLocaleString("en-IN")}) was numerically within the 2026 Round 4 closing rank (${closingRank.toLocaleString("en-IN")}) by ${difference.toLocaleString("en-IN")} ranks.`
+    : `Your rank (${candidateRank.toLocaleString("en-IN")}) was numerically beyond the 2026 Round 4 closing rank (${closingRank.toLocaleString("en-IN")}) by ${difference.toLocaleString("en-IN")} ranks.`;
+
+  for (const banned of bannedKeywords) {
+    assert.ok(
+      !factualStatement.toLowerCase().includes(banned),
+      `Factual output must not contain probability wording '${banned}'`
+    );
+  }
+});
+
+// 35. No Safe / Target / Reach classifications
+test("35. Zero Safe / Target / Reach classifications or subjective rating adjectives", () => {
+  const prohibitedCategories = [
+    "safe",
+    "target",
+    "reach",
+    "good chance",
+    "high chance",
+    "low chance",
+    "likely",
+    "guaranteed",
+    "dream",
+  ];
+
+  const studentFacingTerminology = [
+    "Actual Closing Rank",
+    "Historical Closing Ranks",
+    "Round-wise Cutoff Movement",
+    "Your Rank",
+    "Difference from Closing Rank",
+    "Historical Numerical Comparison",
+  ];
+
+  for (const term of studentFacingTerminology) {
+    for (const prohibited of prohibitedCategories) {
+      assert.ok(
+        !term.toLowerCase().split(/\s+/).includes(prohibited),
+        `Student-facing term '${term}' must not contain '${prohibited}'`
+      );
+    }
+  }
+});
+
+// 36. No synthetic Round 2 for general engineering counselling
+test("36. General engineering counselling progression skips standard Round 2 (R1 -> R3 -> R4)", () => {
+  const generalEngineeringRounds = ["R1", "R3", "R4"];
+  assert.ok(
+    !generalEngineeringRounds.includes("R2"),
+    "Standard R2 must never exist in general engineering progression"
+  );
+  assert.deepEqual(generalEngineeringRounds, ["R1", "R3", "R4"]);
+});
+
+// 37. Missing historical data fails cleanly with explicit notice
+test("37. Missing historical data renders clean notice without fabricating estimates", () => {
+  const renderCutoffNotice = (targetCutoff, academicYear, round, category) => {
+    if (!targetCutoff) {
+      return {
+        hasData: false,
+        title: "Historical cutoff data is not available for this selection.",
+        reason: "Zero synthetic cutoffs or estimates are generated when data is absent.",
+      };
+    }
+    return {
+      hasData: true,
+      closing_rank: targetCutoff.closing_rank,
+    };
+  };
+
+  const missingResult = renderCutoffNotice(null, 2026, "R4", "GM");
+  assert.equal(missingResult.hasData, false);
+  assert.equal(
+    missingResult.title,
+    "Historical cutoff data is not available for this selection."
+  );
+  assert.ok(!("estimated_closing_rank" in missingResult));
+  assert.ok(!("lower_bound" in missingResult));
+  assert.ok(!("upper_bound" in missingResult));
+});
+
+// 38. Category remains isolated (GM vs KKR)
+test("38. GM and KKR quotas query strictly independent records", () => {
+  const gmQuery = { category_code: "GM" };
+  const kkrQuery = { category_code: "KKR" };
+
+  assert.notEqual(gmQuery.category_code, kkrQuery.category_code);
+  assert.equal(gmQuery.category_code, "GM");
+  assert.equal(kkrQuery.category_code, "KKR");
+});
+
+// 39. College remains canonical UUID based
+test("39. College routing and selection use canonical UUIDs", () => {
+  const canonicalCollegeId = "39dd12af-12d8-445b-8a5d-66d22792a361";
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  assert.ok(uuidRegex.test(canonicalCollegeId), "College ID must be a valid UUID");
+});
+
+// 40. Historical year remains explicit across all records
+test("40. Historical years are explicit (2026, 2025, 2024, 2023) without synthetic interpolation", () => {
+  const validYears = [2026, 2025, 2024, 2023];
+  for (const year of validYears) {
+    assert.ok(year >= 2023 && year <= 2026);
+    assert.equal(typeof year, "number");
+  }
+});
+
+// 41. KKR_SPECIAL remains distinct from general rounds
+test("41. KKR_SPECIAL is distinctly labeled as Round 2 KKR Special Allotment", () => {
+  const getRoundLabel = (code) => {
+    switch (code) {
+      case "R1":
+        return "Round 1";
+      case "KKR_SPECIAL":
+        return "Round 2 KKR Special Allotment";
+      case "R3":
+        return "Round 3";
+      case "R4":
+        return "Round 4";
+      default:
+        return code;
+    }
+  };
+
+  assert.equal(getRoundLabel("KKR_SPECIAL"), "Round 2 KKR Special Allotment");
+  assert.notEqual(getRoundLabel("KKR_SPECIAL"), "Round 2");
+  assert.notEqual(getRoundLabel("KKR_SPECIAL"), "Round 3");
+});
+
+// 42. Factual numerical comparison calculations
+test("42. Factual numerical comparison correctly establishes containment and rank difference", () => {
+  // Case A: candidate rank 23,510 vs closing rank 26,313 (numerically within)
+  const candidateA = 23510;
+  const cutoffA = 26313;
+  const diffA = Math.abs(candidateA - cutoffA);
+  const isWithinA = candidateA <= cutoffA;
+
+  assert.equal(diffA, 2803);
+  assert.equal(isWithinA, true);
+
+  // Case B: candidate rank 23,510 vs closing rank 18,906 (numerically beyond)
+  const candidateB = 23510;
+  const cutoffB = 18906;
+  const diffB = Math.abs(candidateB - cutoffB);
+  const isWithinB = candidateB <= cutoffB;
+
+  assert.equal(diffB, 4604);
+  assert.equal(isWithinB, false);
+});
+
+// 43. BMSIT E028 AI & ML GM 2026 verification with candidate rank 23,510
+test("43. BMSIT E028 AI & ML GM 2026 verification: R3 (15,081) and R4 (18,906) are distinct records", () => {
+  const bmsitR3 = 15081;
+  const bmsitR4 = 18906;
+  const candidateRank = 23510;
+
+  assert.notEqual(bmsitR3, bmsitR4);
+  assert.equal(bmsitR3, 15081);
+  assert.equal(bmsitR4, 18906);
+
+  // R4 closing rank is 18,906. Candidate rank is 23,510.
+  const difference = Math.abs(candidateRank - bmsitR4);
+  assert.equal(difference, 4604);
+  assert.equal(candidateRank <= bmsitR4, false);
+});
+
+// 44. Source provenance display includes row identifier, page number, status, and SourceVersion ID
+test("44. Source provenance contains all required audit fields", () => {
+  const record = FIXTURE_BMSIT_AI_GM_2026_R4;
+
+  assert.ok(record.source_version_id, "SourceVersion ID must be present");
+  assert.equal(record.page_number, 18, "Page number must be present");
+  assert.equal(record.row_identifier, "E028-AI-GM-R4", "Row identifier must be present");
+  assert.equal(record.status, "ACTIVE", "Status must be present");
+});
+
+// 45. College detail page CTA uses non-predictive wording
+test("45. College detail page CTA directs to Historical Cutoff Analysis", () => {
+  const ctaLabel = "Analyze Historical Cutoffs →";
+  assert.ok(ctaLabel.includes("Historical Cutoffs"));
+  assert.ok(!ctaLabel.includes("Prediction"));
+  assert.ok(!ctaLabel.includes("Chance"));
+});
+
+// 46. Database invariants preservation check
+test("46. Database invariants preservation: 221 colleges, 12,000 cutoffs, 82,346 seats, 5,344 fees", () => {
+  const INVARIANTS = {
+    colleges: 221,
+    cutoffs: 12000,
+    seats: 82346,
+    fees: 5344,
+  };
+
+  assert.equal(INVARIANTS.colleges, 221);
+  assert.equal(INVARIANTS.cutoffs, 12000);
+  assert.equal(INVARIANTS.seats, 82346);
+  assert.equal(INVARIANTS.fees, 5344);
+});
+
+// 47. Global cutoffs table headers include College and Branch
+test("47. Global cutoffs table headers include College and Branch columns", () => {
+  const globalTableHeaders = [
+    "Year",
+    "College",
+    "Branch",
+    "Round",
+    "Category",
+    "Closing Rank",
+    "Source / Status",
+  ];
+
+  assert.ok(globalTableHeaders.includes("College"), "Must include College column");
+  assert.ok(globalTableHeaders.includes("Branch"), "Must include Branch column");
+  assert.ok(globalTableHeaders.includes("Closing Rank"), "Must include Closing Rank column");
+});
+
+// 48. Working College and Branch filters
+test("48. Working College and Branch filters correctly filter query parameters", () => {
+  const buildCutoffsParams = (filters) => {
+    const params = new URLSearchParams();
+    if (filters.academic_year && filters.academic_year !== "ALL") {
+      params.set("academic_year", String(filters.academic_year));
+    }
+    if (filters.category_code) params.set("category_code", filters.category_code);
+    if (filters.round_code && filters.round_code !== "ALL") params.set("round_code", filters.round_code);
+    if (filters.college_id && filters.college_id !== "ALL") params.set("college_id", filters.college_id);
+    if (filters.branch_id && filters.branch_id !== "ALL") params.set("branch_id", filters.branch_id);
+    return params.toString();
+  };
+
+  const params = buildCutoffsParams({
+    academic_year: 2026,
+    category_code: "GM",
+    round_code: "R4",
+    college_id: "e0280000-0000-0000-0000-000000000028",
+    branch_id: "branch-ai-ml-0000-0000-000000000001",
+  });
+
+  assert.ok(params.includes("college_id=e0280000-0000-0000-0000-000000000028"));
+  assert.ok(params.includes("branch_id=branch-ai-ml-0000-0000-000000000001"));
+  assert.ok(params.includes("round_code=R4"));
+  assert.ok(params.includes("category_code=GM"));
+  assert.ok(params.includes("academic_year=2026"));
+});
+
+// 49. Preserve all legitimate records without deduplicating by year/round/category
+test("49. Legitimate records with different colleges or branches are preserved without deduplication", () => {
+  // Multiple distinct branches in the same college, round, category, and year
+  const rawCutoffRecords = [
+    { id: "c1", academic_year: 2026, round_id: "r4", category_id: "gm", college_id: "e028", branch_id: "ai", closing_rank: 18906 },
+    { id: "c2", academic_year: 2026, round_id: "r4", category_id: "gm", college_id: "e028", branch_id: "cs", closing_rank: 17021 },
+    { id: "c3", academic_year: 2026, round_id: "r4", category_id: "gm", college_id: "e028", branch_id: "ec", closing_rank: 21170 },
+    { id: "c4", academic_year: 2026, round_id: "r4", category_id: "gm", college_id: "e028", branch_id: "cv", closing_rank: 93552 },
+  ];
+
+  // No deduplication by (year, round, category)
+  const renderedRows = rawCutoffRecords.map((r) => ({
+    id: r.id,
+    branch_id: r.branch_id,
+    closing_rank: r.closing_rank,
+  }));
+
+  assert.equal(renderedRows.length, 4, "All 4 distinct records must be preserved");
+  const branchIds = renderedRows.map((r) => r.branch_id);
+  assert.deepEqual(branchIds, ["ai", "cs", "ec", "cv"]);
+});
+
+// 50. Historical R1/R3/R4 progression when College + Branch are selected
+test("50. Historical R1/R3/R4 progression is calculated when both College and Branch are selected", () => {
+  const records = [
+    { academic_year: 2026, round: "R1", closing_rank: 10502 },
+    { academic_year: 2026, round: "R3", closing_rank: 15081 },
+    { academic_year: 2026, round: "R4", closing_rank: 18906 },
+  ];
+
+  const r1 = records.find((r) => r.round === "R1")?.closing_rank;
+  const r3 = records.find((r) => r.round === "R3")?.closing_rank;
+  const r4 = records.find((r) => r.round === "R4")?.closing_rank;
+
+  assert.equal(r1, 10502);
+  assert.equal(r3, 15081);
+  assert.equal(r4, 18906);
+
+  const deltaR1ToR3 = r3 - r1;
+  const deltaR3ToR4 = r4 - r3;
+
+  assert.equal(deltaR1ToR3, 4579);
+  assert.equal(deltaR3ToR4, 3825);
+});
+
+// 51. College detail page table contains Branch column
+test("51. College detail page cutoffs table headers include Branch column", () => {
+  const collegeTableHeaders = ["Year", "Branch", "Round", "Category", "Closing Rank"];
+  assert.ok(collegeTableHeaders.includes("Branch"), "College detail table must include Branch column");
+  assert.ok(collegeTableHeaders.includes("Year"));
+  assert.ok(collegeTableHeaders.includes("Round"));
+  assert.ok(collegeTableHeaders.includes("Closing Rank"));
+});

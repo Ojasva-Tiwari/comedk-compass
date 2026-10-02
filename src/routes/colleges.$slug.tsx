@@ -1,5 +1,5 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -10,6 +10,7 @@ import {
   ChevronRight,
   GitCompareArrows,
   HelpCircle,
+  History,
   Info,
   MapPin,
   ShieldCheck,
@@ -18,16 +19,26 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { CollegeLogo } from "@/components/product/brand";
 import { SourceBadge } from "@/components/product/data-ui";
 import { EmptyState, Panel, Section, SectionHeading } from "@/components/product/page";
 import {
   CANONICAL_COLLEGES,
+  CANONICAL_BRANCHES,
   CANONICAL_ROUND_NAMES,
+  CANONICAL_CATEGORY_NAMES,
   fetchCollegeById,
   fetchCollegesPaginated,
   fetchCutoffs,
   fetchFees,
+  fetchBranches,
 } from "@/lib/api-client";
 
 interface ResolvedCollege {
@@ -154,15 +165,40 @@ function CollegeDetail() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // 2. Fetch verified cutoff records from backend
+  // 2. Fetch verified cutoff records from backend (fetch full list for the college)
   const { data: cutoffsData, isLoading: cutoffsLoading } = useQuery({
     queryKey: ["college-cutoffs", college.id],
-    queryFn: () => fetchCutoffs({ college_id: college.id, limit: 50 }),
+    queryFn: () => fetchCutoffs({ college_id: college.id, limit: 200 }),
     staleTime: 5 * 60 * 1000,
   });
 
+  // 3. Fetch branches catalog for joining
+  const { data: branches = CANONICAL_BRANCHES } = useQuery({
+    queryKey: ["branches-catalog"],
+    queryFn: () => fetchBranches("ENGINEERING"),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const branchMap = useMemo(() => {
+    const map = new Map<string, { code: string; name: string }>();
+    branches.forEach((b) => {
+      map.set(b.id, { code: b.code, name: b.name });
+    });
+    return map;
+  }, [branches]);
+
+  const [tableBranchFilter, setTableBranchFilter] = useState<string>("ALL");
+
   const verifiedFees = feesData?.items ?? [];
   const verifiedCutoffs = cutoffsData?.items ?? [];
+
+  const filteredCutoffs = useMemo(() => {
+    if (tableBranchFilter === "ALL") return verifiedCutoffs;
+    return verifiedCutoffs.filter((c) => {
+      const br = branchMap.get(c.branch_id);
+      return br?.code === tableBranchFilter || c.branch_id === tableBranchFilter;
+    });
+  }, [verifiedCutoffs, tableBranchFilter, branchMap]);
 
   // Lowest closing rank among published cutoffs for reference
   const lowestCutoff = verifiedCutoffs.length > 0
@@ -273,21 +309,38 @@ function CollegeDetail() {
         <div className="mt-10 grid gap-6 lg:grid-cols-[1.2fr_.8fr]">
           {/* Real Cutoff Table */}
           <Panel className="p-6">
-            <div className="flex items-center justify-between border-b border-border pb-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
               <div>
                 <p className="eyebrow">Verified Allotment Cutoffs</p>
                 <h2 className="mt-1 text-lg font-semibold text-foreground">
                   Published Closing Ranks
                 </h2>
               </div>
-              <SourceBadge meta={{ source: "Official COMEDK", year: 2026, confidence: "High" }} />
+              <div className="flex items-center gap-2">
+                <Select value={tableBranchFilter} onValueChange={setTableBranchFilter}>
+                  <SelectTrigger className="w-36 h-7 text-[11px]">
+                    <SelectValue placeholder="All Branches" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-56">
+                    <SelectItem value="ALL" className="text-xs">
+                      All Branches
+                    </SelectItem>
+                    {branches.map((b) => (
+                      <SelectItem key={b.id} value={b.code} className="text-xs">
+                        <span className="font-semibold font-mono">{b.code}:</span> {b.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <SourceBadge meta={{ source: "Official COMEDK", year: 2026, confidence: "High" }} />
+              </div>
             </div>
 
             {cutoffsLoading ? (
               <p className="py-8 text-center text-xs text-muted-foreground">Loading verified cutoff records...</p>
-            ) : verifiedCutoffs.length === 0 ? (
+            ) : filteredCutoffs.length === 0 ? (
               <p className="py-8 text-center text-xs text-muted-foreground">
-                No published cutoff records found for this institution.
+                No published cutoff records found for this selection.
               </p>
             ) : (
               <div className="mt-4 max-h-80 overflow-y-auto overflow-x-auto">
@@ -295,24 +348,39 @@ function CollegeDetail() {
                   <thead className="bg-muted/60 text-[10px] uppercase text-muted-foreground">
                     <tr>
                       <th className="px-3 py-2">Year</th>
+                      <th className="px-3 py-2">Branch</th>
                       <th className="px-3 py-2">Round</th>
                       <th className="px-3 py-2">Category</th>
                       <th className="px-3 py-2 text-right">Closing Rank</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {verifiedCutoffs.slice(0, 15).map((c) => (
-                      <tr key={c.id}>
-                        <td className="px-3 py-2.5 font-medium">{c.academic_year}</td>
-                        <td className="px-3 py-2.5">
-                          {CANONICAL_ROUND_NAMES[c.round_id]?.name || "Official Round"}
-                        </td>
-                        <td className="px-3 py-2.5">GM</td>
-                        <td className="px-3 py-2.5 text-right font-mono font-semibold text-foreground">
-                          {c.closing_rank.toLocaleString("en-IN")}
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredCutoffs.slice(0, 30).map((c) => {
+                      const br = branchMap.get(c.branch_id);
+                      const catCode = CANONICAL_CATEGORY_NAMES[c.category_id] || "GM";
+                      return (
+                        <tr key={c.id}>
+                          <td className="px-3 py-2.5 font-medium font-mono text-muted-foreground">{c.academic_year}</td>
+                          <td className="px-3 py-2.5 font-medium">
+                            <span className="font-mono text-[11px] font-semibold bg-muted px-1.5 py-0.5 rounded border border-border">
+                              {br?.code || "ENG"}
+                            </span>
+                            <span className="ml-1.5 text-muted-foreground text-[11px] truncate max-w-[120px] inline-block align-bottom">
+                              {br?.name || "Program"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <span className="rounded bg-muted/40 px-1.5 py-0.5 font-mono text-[11px]">
+                              {CANONICAL_ROUND_NAMES[c.round_id]?.name || "Official Round"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-xs">{catCode}</td>
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold text-foreground">
+                            {c.closing_rank.toLocaleString("en-IN")}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -373,7 +441,7 @@ function CollegeDetail() {
                     category: "GM",
                   }}
                 >
-                  <Sparkles className="size-4" /> Full Interval Prediction →
+                  <History className="size-4" /> Analyze Historical Cutoffs →
                 </Link>
               </Button>
             </div>
