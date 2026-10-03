@@ -430,21 +430,7 @@ function CollegeDetail() {
               )}
             </div>
 
-            <div className="mt-6 border-t border-border pt-4">
-              <Button asChild className="w-full gap-2">
-                <Link
-                  to="/predictor"
-                  search={{
-                    collegeId: college.id,
-                    rank: candidateRank,
-                    round: "R1",
-                    category: "GM",
-                  }}
-                >
-                  <History className="size-4" /> Analyze Historical Cutoffs →
-                </Link>
-              </Button>
-            </div>
+            {/* Removed Analyze button */}
           </Panel>
         </div>
 

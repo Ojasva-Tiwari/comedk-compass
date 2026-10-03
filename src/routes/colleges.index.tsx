@@ -12,6 +12,7 @@ interface CollegesSearchParams {
   rank?: number;
   query?: string;
   location?: string;
+  branch?: string;
   page?: number;
 }
 
@@ -21,16 +22,17 @@ export const Route = createFileRoute("/colleges/")({
       typeof search.rank === "number"
         ? search.rank
         : typeof search.rank === "string"
-        ? parseInt(search.rank, 10) || undefined
-        : undefined,
+          ? parseInt(search.rank, 10) || undefined
+          : undefined,
     query: typeof search.query === "string" ? search.query : undefined,
     location: typeof search.location === "string" ? search.location : undefined,
+    branch: typeof search.branch === "string" ? search.branch : undefined,
     page:
       typeof search.page === "number"
         ? search.page
         : typeof search.page === "string"
-        ? parseInt(search.page, 10) || 1
-        : 1,
+          ? parseInt(search.page, 10) || 1
+          : 1,
   }),
   head: () => ({
     meta: [
@@ -65,13 +67,26 @@ const LOCATIONS = [
   "Shivamogga",
 ];
 
+const COMMON_BRANCHES = [
+  "All",
+  "CSE",
+  "AIML",
+  "ISE",
+  "ECE",
+  "EEE",
+  "Civil",
+  "Mechanical",
+];
+
 function Colleges() {
   const searchParams = Route.useSearch();
+  const navigate = Route.useNavigate();
   const candidateRank = searchParams.rank && searchParams.rank > 0 ? searchParams.rank : undefined;
 
   const [searchQuery, setSearchQuery] = useState(searchParams.query || "");
   const [debouncedQuery, setDebouncedQuery] = useState(searchParams.query || "");
   const [selectedLocation, setSelectedLocation] = useState(searchParams.location || "All");
+  const [selectedBranch, setSelectedBranch] = useState(searchParams.branch || "CSE");
   const [page, setPage] = useState(searchParams.page || 1);
 
   // Debounce search input
@@ -92,12 +107,14 @@ function Colleges() {
     error,
     refetch,
   } = useQuery({
-    queryKey: ["colleges-directory", debouncedQuery, selectedLocation, offset],
+    queryKey: ["colleges-directory", debouncedQuery, selectedLocation, selectedBranch, candidateRank, offset],
     queryFn: () =>
       fetchCollegesPaginated({
         query: debouncedQuery.trim() || undefined,
         location: selectedLocation === "All" ? undefined : selectedLocation,
+        branch: selectedBranch === "All" ? undefined : selectedBranch,
         institution_type: "ALL",
+        rank: candidateRank,
         limit: PAGE_SIZE,
         offset,
       }),
@@ -137,15 +154,39 @@ function Colleges() {
                 onValueChange={(val) => {
                   setSelectedLocation(val);
                   setPage(1);
+                  navigate({ search: (prev) => ({ ...prev, location: val === "All" ? undefined : val, page: 1 }) });
                 }}
               >
-                <SelectTrigger className="w-36 text-xs">
+                <SelectTrigger className="w-28 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {LOCATIONS.map((loc) => (
                     <SelectItem key={loc} value={loc} className="text-xs">
                       {loc}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-muted-foreground">Branch:</span>
+              <Select
+                value={selectedBranch}
+                onValueChange={(val) => {
+                  setSelectedBranch(val);
+                  setPage(1);
+                  navigate({ search: (prev) => ({ ...prev, branch: val === "All" ? undefined : val, page: 1 }) });
+                }}
+              >
+                <SelectTrigger className="w-28 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {COMMON_BRANCHES.map((b) => (
+                    <SelectItem key={b} value={b} className="text-xs">
+                      {b}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -241,21 +282,6 @@ function Colleges() {
                     <Button asChild size="sm" variant="ghost" className="text-xs font-medium">
                       <Link to="/colleges/$slug" params={{ slug: c.id }}>
                         College Details →
-                      </Link>
-                    </Button>
-
-                    <Button asChild size="sm" variant="outline" className="gap-1 text-xs">
-                      <Link
-                        to="/predictor"
-                        search={{
-                          collegeId: c.id,
-                          rank: candidateRank,
-                          round: "R1",
-                          category: "GM",
-                        }}
-                      >
-                        <Sparkles className="size-3 text-primary" />
-                        Analyze
                       </Link>
                     </Button>
                   </div>
