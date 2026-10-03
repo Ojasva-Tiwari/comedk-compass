@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { CompassMark } from "./brand";
 
 const links = [
- { label:"Explore",to:"/",icon:Home },{ label:"Predictor",to:"/predictor",icon:Target },{ label:"Colleges",to:"/colleges",icon:Building2 },{ label:"Cutoffs",to:"/cutoffs",icon:BarChart3 },{ label:"Compare",to:"/compare",icon:GitCompareArrows },{ label:"Counselling",to:"/counselling",icon:Command },
+ { label:"Explore",to:"/",icon:Home },{ label:"Colleges",to:"/colleges",icon:Building2 },{ label:"Cutoffs",to:"/cutoffs",icon:BarChart3 },{ label:"Compare",to:"/compare",icon:GitCompareArrows },{ label:"Counselling",to:"/counselling",icon:Command },
 ] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {

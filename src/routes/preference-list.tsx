@@ -295,20 +295,6 @@ function PreferenceList() {
                     >
                       {item.priority} Priority
                     </button>
-
-                    <Button asChild variant="ghost" size="icon" className="size-8" title="Analyze with Rank Predictor">
-                      <Link
-                        to="/predictor"
-                        search={{
-                          collegeId: item.collegeId,
-                          round: "R1",
-                          category: "GM",
-                        }}
-                      >
-                        <Sparkles className="size-4 text-muted-foreground" />
-                      </Link>
-                    </Button>
-
                     <Button
                       variant="ghost"
                       size="icon"
